@@ -16,11 +16,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 
 import { DEFAULT_PREFS } from '@/shared/contracts';
 import type { PrefsSource, PrefsValues } from '@/features/personalization/useReaderPrefs';
-import {
-  FONT_FAMILY_OPTIONS,
-  TEXT_SIZE_OPTIONS,
-  THEME_OPTIONS,
-} from '@/features/personalization/prefsOptions';
+import { FONT_FAMILY_OPTIONS, THEME_OPTIONS } from '@/features/personalization/prefsOptions';
 
 import ReaderPreferencesScreen from './ReaderPreferencesScreen';
 
@@ -30,6 +26,21 @@ import ReaderPreferencesScreen from './ReaderPreferencesScreen';
 const mockIsOnline = jest.fn(() => true);
 jest.mock('@hooks/useNetworkStatus', () => ({
   useNetworkStatus: () => mockIsOnline(),
+}));
+
+// LayoutSection reads this to decide whether "Double" is offered — see its own
+// header note. Defaults to a wide (tablet) width so every test that does not
+// care about the breakpoint sees both spread options, matching the fixture's
+// pre-existing behaviour. Mocked at its OWN defining module
+// (react-native/Libraries/Utilities/useWindowDimensions), not by spreading the
+// whole 'react-native' barrel — that barrel lazily defines its exports as
+// getters for native modules with no binary in the test environment
+// (`DevMenu`), and spreading it forces every one of them to evaluate eagerly.
+const mockUseWindowDimensions = jest.fn(() => ({ width: 1024 }) as never);
+const mockWindowWidth = (width: number) => mockUseWindowDimensions.mockReturnValue({ width } as never);
+jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
+  __esModule: true,
+  default: () => mockUseWindowDimensions(),
 }));
 
 const STORED: PrefsValues = {
@@ -62,13 +73,15 @@ const themeSection = () => within(screen.getByTestId('theme-section'));
 const fontSection = () => within(screen.getByTestId('font-section'));
 const layoutSection = () => within(screen.getByTestId('layout-section'));
 const typographySection = () => within(screen.getByTestId('typography-section'));
+const zoomSection = () => within(screen.getByTestId('zoom-section'));
 
 afterEach(() => {
   mockIsOnline.mockReturnValue(true);
+  mockUseWindowDimensions.mockReturnValue({ width: 1024 } as never);
 });
 
 describe('ReaderPreferencesScreen structure', () => {
-  it('renders Theme, Font, Layout and Typography sections', async () => {
+  it('renders Theme, Font, Layout, Typography and Zoom sections', async () => {
     await renderReady(fakeSource());
 
     expect(screen.getByText('Theme')).toBeTruthy();
@@ -76,14 +89,17 @@ describe('ReaderPreferencesScreen structure', () => {
     expect(screen.getByText('Reading style')).toBeTruthy();
     expect(screen.getByText('Page view')).toBeTruthy();
     expect(screen.getByTestId('typography-section')).toBeTruthy();
+    expect(screen.getByTestId('zoom-section')).toBeTruthy();
   });
 
-  // Never rendered: identity and sync plumbing, plus zoom and the accessibility
-  // flags, which belong to other surfaces.
+  // Never rendered: identity and sync plumbing, plus lineHeight and the
+  // accessibility flags, which are either not wired in the reader WebView yet
+  // or belong to other surfaces. Zoom is NOT on this list any more — it moved
+  // to a dedicated case below, now that it is a real section.
   it('renders none of the fields this screen must not show', async () => {
     await renderReady(fakeSource());
 
-    for (const forbidden of [/zoom/i, /userId/i, /updatedAt/i, /isDeleted/i, /synced/i]) {
+    for (const forbidden of [/line height/i, /userId/i, /updatedAt/i, /isDeleted/i, /synced/i]) {
       expect(screen.queryByText(forbidden)).toBeNull();
     }
   });
@@ -193,6 +209,28 @@ describe('ReaderPreferencesScreen layout section', () => {
       layout: { flow: 'paginated', spread: 'double' },
     });
   });
+
+  // epub.js gates rendition.spread('double') at 800px (its own minSpreadWidth),
+  // so below that "Double" is a no-op for EPUB. This screen has no book format
+  // to condition on, so it hides the option on a phone-sized screen entirely
+  // (the "skip it" option the requirements name) rather than leave a control
+  // on screen that silently does nothing for EPUB.
+  it('hides Double on a phone-sized screen and explains itself', async () => {
+    mockWindowWidth(390);
+    await renderReady(fakeSource());
+
+    expect(layoutSection().getByTestId('tabs-tab-single')).toBeTruthy();
+    expect(layoutSection().queryByTestId('tabs-tab-double')).toBeNull();
+    expect(screen.getByText(/iPad-sized screen/i)).toBeTruthy();
+  });
+
+  it('offers Double on a tablet-sized screen, with no note', async () => {
+    mockWindowWidth(1024);
+    await renderReady(fakeSource());
+
+    expect(layoutSection().getByTestId('tabs-tab-double')).toBeTruthy();
+    expect(screen.queryByText(/iPad-sized screen/i)).toBeNull();
+  });
 });
 
 describe('ReaderPreferencesScreen font section', () => {
@@ -279,80 +317,76 @@ describe('ReaderPreferencesScreen font section', () => {
 });
 
 describe('ReaderPreferencesScreen typography section', () => {
-  it('offers exactly the six text size presets', async () => {
-    await renderReady(fakeSource());
-
-    for (const option of TEXT_SIZE_OPTIONS) {
-      expect(typographySection().getByTestId(`tabs-tab-${option.id}`)).toBeTruthy();
-    }
-  });
-
   it('says the choice is EPUB only', async () => {
     await renderReady(fakeSource());
 
     expect(typographySection().getByText(/EPUB only/i)).toBeTruthy();
   });
 
-  it('marks the stored text size as the selected preset', async () => {
+  it('does not render a line height control — not wired in the reader yet', async () => {
     await renderReady(fakeSource());
 
-    // STORED carries DEFAULT_PREFS.typography, so size 16.
-    expect(
-      typographySection().getByTestId('tabs-tab-16').props.accessibilityState.selected,
-    ).toBe(true);
+    expect(typographySection().queryByTestId('typography-line-height-slider')).toBeNull();
+    expect(typographySection().queryByText(/line height/i)).toBeNull();
   });
 
-  // A value from outside the six presets — another device, or a value this
-  // picker predates. Same handling as Theme's `highContrast` case.
-  it('selects nothing and explains itself when the stored text size is not a preset', async () => {
-    const source = fakeSource({
-      getPrefs: jest.fn(() =>
-        Promise.resolve({ ...STORED, typography: { ...STORED.typography, size: 15 } }),
-      ),
-    });
-    await renderReady(source);
-
-    for (const option of TEXT_SIZE_OPTIONS) {
-      expect(
-        typographySection().getByTestId(`tabs-tab-${option.id}`).props.accessibilityState.selected,
-      ).toBe(false);
-    }
-    expect(screen.getByText(/set elsewhere/i)).toBeTruthy();
-  });
-
-  it('writes the picked text size through the seam, spreading the group', async () => {
-    const source = fakeSource();
-    await renderReady(source);
-
-    fireEvent.press(typographySection().getByText('20pt'));
-
-    expect(source.savePrefs).toHaveBeenCalledWith({
-      typography: { size: 20, lineHeight: 1.5, spacing: 0, margins: 16 },
-    });
-  });
-
-  it('renders a slider for line height, letter spacing and page margins', async () => {
+  it('renders a slider for font size, letter spacing and page margins', async () => {
     await renderReady(fakeSource());
 
-    expect(typographySection().getByTestId('typography-line-height-slider')).toBeTruthy();
+    expect(typographySection().getByTestId('typography-font-size-slider')).toBeTruthy();
     expect(typographySection().getByTestId('typography-letter-spacing-slider')).toBeTruthy();
     expect(typographySection().getByTestId('typography-margins-slider')).toBeTruthy();
   });
 
+  it('labels font size in pt, not px', async () => {
+    // Margins defaults to 16 too — a distinct value here is what makes "16px"
+    // unambiguous evidence of a mislabelled font size rather than a
+    // coincidental match against the margins readout.
+    const source = fakeSource({
+      getPrefs: jest.fn(() =>
+        Promise.resolve({ ...STORED, typography: { ...STORED.typography, margins: 24 } }),
+      ),
+    });
+    await renderReady(source);
+
+    expect(typographySection().getByText('16pt')).toBeTruthy();
+    expect(typographySection().queryByText('16px')).toBeNull();
+  });
+
+  it('shows "None" for letter spacing at zero, not "0px"', async () => {
+    await renderReady(fakeSource());
+
+    // STORED carries DEFAULT_PREFS.typography, so spacing 0.
+    expect(typographySection().getByText('None')).toBeTruthy();
+    expect(typographySection().queryByText('0px')).toBeNull();
+  });
+
+  it('shows the px value once letter spacing is off zero', async () => {
+    const source = fakeSource({
+      getPrefs: jest.fn(() =>
+        Promise.resolve({ ...STORED, typography: { ...STORED.typography, spacing: 2 } }),
+      ),
+    });
+    await renderReady(source);
+
+    expect(typographySection().getByText('2px')).toBeTruthy();
+    expect(typographySection().queryByText('None')).toBeNull();
+  });
+
   // Save-on-release: the section wires the slider's release event straight to
   // the seam, spreading the rest of the typography group.
-  it('writes the released line height through the seam, spreading the group', async () => {
+  it('writes the released font size through the seam, spreading the group', async () => {
     const source = fakeSource();
     await renderReady(source);
 
     fireEvent(
-      typographySection().getByTestId('typography-line-height-slider'),
+      typographySection().getByTestId('typography-font-size-slider'),
       'slidingComplete',
-      1.8,
+      20,
     );
 
     expect(source.savePrefs).toHaveBeenCalledWith({
-      typography: { size: 16, lineHeight: 1.8, spacing: 0, margins: 16 },
+      typography: { size: 20, lineHeight: 1.5, spacing: 0, margins: 16 },
     });
   });
 
@@ -384,6 +418,38 @@ describe('ReaderPreferencesScreen typography section', () => {
     expect(source.savePrefs).toHaveBeenCalledWith({
       typography: { size: 16, lineHeight: 1.5, spacing: 0, margins: 32 },
     });
+  });
+
+  it('allows page margins up to 64px', async () => {
+    await renderReady(fakeSource());
+
+    const slider = typographySection().getByTestId('typography-margins-slider');
+    expect(slider.props.maximumValue).toBe(64);
+  });
+});
+
+describe('ReaderPreferencesScreen zoom section', () => {
+  it('says the choice is PDF only', async () => {
+    await renderReady(fakeSource());
+
+    expect(zoomSection().getByText(/PDF only/i)).toBeTruthy();
+  });
+
+  it('renders a slider defaulting to 100%', async () => {
+    await renderReady(fakeSource());
+
+    expect(zoomSection().getByTestId('zoom-level-slider')).toBeTruthy();
+    // STORED carries DEFAULT_PREFS.zoom, so level 1.0.
+    expect(zoomSection().getByText('100%')).toBeTruthy();
+  });
+
+  it('writes the released zoom level through the seam', async () => {
+    const source = fakeSource();
+    await renderReady(source);
+
+    fireEvent(zoomSection().getByTestId('zoom-level-slider'), 'slidingComplete', 1.5);
+
+    expect(source.savePrefs).toHaveBeenCalledWith({ zoom: { level: 1.5 } });
   });
 });
 
