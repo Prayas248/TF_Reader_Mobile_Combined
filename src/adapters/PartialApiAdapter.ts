@@ -9,7 +9,7 @@
 // yet — swap a method over to `this.api` as its real endpoint gets verified.
 // Search (institution-scoped and public) has no ApiAdapter method at all yet.
 import type { BookId } from '@/shared/types/primitives';
-import type { BatchItemsResult, Catalogue, Publication, Shelf } from '@model/types';
+import type { BatchItemsResult, Catalogue, Publication, Shelf, WorkFeed } from '@model/types';
 import type { Institution } from '@model/institution';
 import type { DataSource, InstitutionQueryParams } from '@adapters/InstitutionSource';
 import type { ShelfQuery } from '@adapters/CatalogueSource';
@@ -64,5 +64,9 @@ export class PartialApiAdapter implements DataSource {
 
   getItemsBatch(ids: BookId[]): Promise<BatchItemsResult> {
     return this.api.getItemsBatch(ids);
+  }
+
+  getWork(institutionId: string, workId: string): Promise<WorkFeed> {
+    return this.api.getWork(institutionId, workId);
   }
 }

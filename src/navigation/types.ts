@@ -52,6 +52,9 @@ export type CatalogueStackParamList = {
   // store, so a caller cannot reach the screen without naming an institution.
   // A shelf only exists inside one institution's catalogue.
   Shelf: { shelfId: string; title: string; institutionId: string };
+  // Journal hierarchy drill-down — Journal → Volume → Issue → Articles.
+  // title/coverUrl are passed so the header and cover render without a network call.
+  Journal: { workId: string; title: string; institutionId: string; coverUrl?: string };
   // Personal-account (OIDC) form, reached from the access gate's "Personal
   // account" card. Registered here as well as in Profile for the same reason
   // SignIn is: a flow that started in this tab finishes in it.

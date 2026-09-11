@@ -256,9 +256,25 @@ export interface NavLink {
   // instead point at the catalogue root ('catalogue') — a link getShelf has no
   // group id for and will always 404 on. A caller opens 'shelf' via
   // getShelf(institutionId, shelfId); 'catalogue' has nothing to open by id and
-  // goes to the catalogue home instead.
-  target: 'shelf' | 'catalogue';
+  // goes to the catalogue home instead. 'works' is a journal/volume/issue drill-down
+  // — opened via getWork(institutionId, workId).
+  target: 'shelf' | 'catalogue' | 'works';
+  // Tail of a works href ('.../works/item_88200446' → 'item_88200446'). Present
+  // only when target === 'works'. Same opaque-key rule as shelfId.
+  workId?: string;
+  // Cover image URL, present when the feed supplies an images array on the
+  // navigation entry. Optional — ContentCard shows a placeholder when absent.
+  coverUrl?: string;
 }
+
+// Response from GET /works/{workId}. Two shapes depending on the work type:
+//   'navigation' — Journal or Volume: children to drill into (volumes or issues)
+//   'publications' — Issue: the articles inside it, same Publication shape as a shelf
+// coverUrl is parsed from the feed's own metadata.images so JournalScreen can
+// display the journal cover without a separate request.
+export type WorkFeed =
+  | { kind: 'navigation'; title: string; coverUrl?: string; children: NavLink[] }
+  | { kind: 'publications'; title: string; coverUrl?: string; articles: Publication[] };
 
 // A group of publications — one shelf/carousel on the home screen, or a full
 // paginated listing when fetched on its own.

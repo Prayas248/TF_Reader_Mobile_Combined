@@ -96,3 +96,7 @@ export function idFromHref(href: string): string {
 export function isShelfHref(href: string): boolean {
   return /\/groups\//.test(href.split(/[?#]/)[0]);
 }
+
+export function isWorksHref(href: string): boolean {
+  return /\/works\//.test(href.split(/[?#]/)[0]);
+}

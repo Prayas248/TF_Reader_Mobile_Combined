@@ -321,6 +321,36 @@ export default function CatalogueScreen({ institution }: CatalogueScreenProps) {
           }) : (
             <EmptyState variant="no_content"/>
           )}
+
+      {/* Journal navigation entries — works hrefs from the catalogue navigation.
+          Rendered as ContentCards so they match the existing book rows exactly.
+          Only shown once data has loaded and journals exist. */}
+      {!loading && (() => {
+        const journals = catalogue?.navigation.filter((n) => n.target === 'works') ?? [];
+        if (journals.length === 0) return null;
+        return (
+          <View style={styles.section}>
+            <SectionHeader title="Journals" emphasis="editorial" />
+            <View style={styles.list}>
+              {journals.map((journal) => (
+                <ContentCard
+                  key={journal.workId}
+                  title={journal.title}
+                  imageUrl={journal.coverUrl}
+                  onPress={() =>
+                    navigation.navigate('Journal', {
+                      workId: journal.workId!,
+                      title: journal.title,
+                      institutionId,
+                      coverUrl: journal.coverUrl,
+                    })
+                  }
+                />
+              ))}
+            </View>
+          </View>
+        );
+      })()}
     </ScrollView>
     );
   }
