@@ -235,28 +235,18 @@ describe('useReaderPrefs layout', () => {
 describe('useReaderPrefs typography', () => {
   // Same load-bearing rule as the font group above: `typography` carries four
   // fields, and a patch built from only the one that changed would drop the
-  // other three.
-  it('spreads the existing typography group when the text size changes', async () => {
+  // others. `lineHeight` is not exposed as its own callback any more (not
+  // wired in the reader WebView per the Settings UI requirements), but it
+  // still lives on the group and must survive every other field's write.
+  it('spreads the existing typography group when font size changes', async () => {
     const { result, source } = await renderReady();
 
     await act(async () => {
-      result.current.onSelectTextSize(20);
+      result.current.onChangeFontSize(20);
     });
 
     expect(source.savePrefs).toHaveBeenCalledWith({
       typography: { size: 20, lineHeight: 1.5, spacing: 0, margins: 16 },
-    });
-  });
-
-  it('spreads the existing typography group when the line height changes', async () => {
-    const { result, source } = await renderReady();
-
-    await act(async () => {
-      result.current.onChangeLineHeight(1.8);
-    });
-
-    expect(source.savePrefs).toHaveBeenCalledWith({
-      typography: { size: 16, lineHeight: 1.8, spacing: 0, margins: 16 },
     });
   });
 
@@ -287,58 +277,31 @@ describe('useReaderPrefs typography', () => {
   // THE RANGES ARE ENFORCED HERE, NOT BY THE STORE — see the note above these
   // callbacks in useReaderPrefs.ts. Each field is clamped on both ends so a
   // section (or a future caller) cannot write a value the control could never
-  // have produced honestly.
-  // A CLAMP IS NOT ENOUGH HERE — text size is six fixed presets, not a range,
-  // so a value between two presets must snap to one of them rather than pass
-  // through unchanged. Only `Tabs` can call this in practice, and it can only
-  // ever emit a preset id, but the callback stays correct for any caller.
-  it('snaps text size to the nearest preset, both in range and past either end', async () => {
+  // have produced honestly. Font size is now a 10-32pt range (Settings UI
+  // requirements, 2026-09-11), replacing the six fixed presets this used to
+  // snap to.
+  it('clamps font size to 10-32pt', async () => {
     const { result, source } = await renderReady();
 
     await act(async () => {
-      result.current.onSelectTextSize(20);
+      result.current.onChangeFontSize(20);
     });
     expect(source.savePrefs).toHaveBeenLastCalledWith(
       expect.objectContaining({ typography: expect.objectContaining({ size: 20 }) }),
     );
 
     await act(async () => {
-      result.current.onSelectTextSize(17);
+      result.current.onChangeFontSize(40);
     });
     expect(source.savePrefs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ typography: expect.objectContaining({ size: 16 }) }),
+      expect.objectContaining({ typography: expect.objectContaining({ size: 32 }) }),
     );
 
     await act(async () => {
-      result.current.onSelectTextSize(30);
+      result.current.onChangeFontSize(2);
     });
     expect(source.savePrefs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ typography: expect.objectContaining({ size: 24 }) }),
-    );
-
-    await act(async () => {
-      result.current.onSelectTextSize(2);
-    });
-    expect(source.savePrefs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ typography: expect.objectContaining({ size: 14 }) }),
-    );
-  });
-
-  it('clamps line height to 1.0-2.0', async () => {
-    const { result, source } = await renderReady();
-
-    await act(async () => {
-      result.current.onChangeLineHeight(3);
-    });
-    expect(source.savePrefs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ typography: expect.objectContaining({ lineHeight: 2.0 }) }),
-    );
-
-    await act(async () => {
-      result.current.onChangeLineHeight(0);
-    });
-    expect(source.savePrefs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ typography: expect.objectContaining({ lineHeight: 1.0 }) }),
+      expect.objectContaining({ typography: expect.objectContaining({ size: 10 }) }),
     );
   });
 
@@ -360,14 +323,14 @@ describe('useReaderPrefs typography', () => {
     );
   });
 
-  it('clamps page margins to 0-48px', async () => {
+  it('clamps page margins to 0-64px', async () => {
     const { result, source } = await renderReady();
 
     await act(async () => {
       result.current.onChangeMargins(100);
     });
     expect(source.savePrefs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ typography: expect.objectContaining({ margins: 48 }) }),
+      expect.objectContaining({ typography: expect.objectContaining({ margins: 64 }) }),
     );
 
     await act(async () => {
@@ -376,6 +339,34 @@ describe('useReaderPrefs typography', () => {
     expect(source.savePrefs).toHaveBeenLastCalledWith(
       expect.objectContaining({ typography: expect.objectContaining({ margins: 0 }) }),
     );
+  });
+});
+
+describe('useReaderPrefs zoom', () => {
+  // ZoomPrefs has one field, so there is nothing to spread — unlike font,
+  // layout and typography's groups, a patch here is the whole group.
+  it('writes zoom as a top-level group with no sibling to spread', async () => {
+    const { result, source } = await renderReady();
+
+    await act(async () => {
+      result.current.onChangeZoom(1.5);
+    });
+
+    expect(source.savePrefs).toHaveBeenCalledWith({ zoom: { level: 1.5 } });
+  });
+
+  it('clamps zoom to 0.5-3.0', async () => {
+    const { result, source } = await renderReady();
+
+    await act(async () => {
+      result.current.onChangeZoom(5);
+    });
+    expect(source.savePrefs).toHaveBeenLastCalledWith({ zoom: { level: 3.0 } });
+
+    await act(async () => {
+      result.current.onChangeZoom(0.1);
+    });
+    expect(source.savePrefs).toHaveBeenLastCalledWith({ zoom: { level: 0.5 } });
   });
 });
 

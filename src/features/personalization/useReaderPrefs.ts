@@ -54,7 +54,7 @@ import {
 
 import * as prefsStore from './prefsStore';
 
-import { FONT_SCALE_MULTIPLIER, TEXT_SIZE_OPTIONS } from './prefsOptions';
+import { FONT_SCALE_MULTIPLIER, FONT_SIZE_PT, ZOOM_LEVEL } from './prefsOptions';
 
 // ─── The values, without the plumbing ────────────────────────────────────────
 
@@ -150,18 +150,6 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-// Text size is not a free-range value, so a min/max clamp is not enough — a
-// clamp alone would still let 15 or 21.5 through, and the picker can never
-// produce either. The numbers come from `TEXT_SIZE_OPTIONS`, the same list
-// `TypographySection` renders, so the two cannot drift apart.
-const TEXT_SIZE_PRESETS = TEXT_SIZE_OPTIONS.map((option) => Number(option.id));
-
-function nearestTextSizePreset(size: number) {
-  return TEXT_SIZE_PRESETS.reduce((closest, preset) =>
-    Math.abs(preset - size) < Math.abs(closest - size) ? preset : closest,
-  );
-}
-
 // ─── The seam ────────────────────────────────────────────────────────────────
 
 /**
@@ -228,14 +216,14 @@ export interface UseReaderPrefs {
   onSelectFontFamily: (family: string) => void;
   onSelectFlow: (flow: LayoutPrefs['flow']) => void;
   onSelectSpread: (spread: LayoutPrefs['spread']) => void;
-  /** Snapped to the nearest of the six fixed presets (14–24pt) before it is saved. */
-  onSelectTextSize: (size: number) => void;
-  /** Clamped to 1.0–2.0 before it is saved. */
-  onChangeLineHeight: (lineHeight: number) => void;
+  /** Clamped to 10–32pt before it is saved. */
+  onChangeFontSize: (size: number) => void;
   /** Clamped to 0–4px before it is saved. */
   onChangeLetterSpacing: (spacing: number) => void;
-  /** Clamped to 0–48px before it is saved. */
+  /** Clamped to 0–64px before it is saved. */
   onChangeMargins: (margins: number) => void;
+  /** Clamped to 0.5–3.0 before it is saved. PDF only — see ZoomSection. */
+  onChangeZoom: (level: number) => void;
   // ─── Accessibility (Hruthik's contract, FINAL 2026-09-02) ──────────────────
   //
   // ONE CALLBACK PER CONTROL, rather than a single `onChangeAccessibility`
@@ -419,22 +407,14 @@ export function useReaderPrefs({ source }: UseReaderPrefsOptions = {}): UseReade
   // number the caller hands it — the Week 3 plan is explicit that the UI is
   // the only guard, so each Typography callback constrains its value before
   // writing rather than trusting the section (or a future caller of this
-  // hook) to have done so already. Text size snaps to the nearest preset,
-  // because it is a fixed set rather than a range; the three sliders clamp
-  // to their min/max, because a slider's own `step` already keeps them on
-  // the grid.
-  const onSelectTextSize = useCallback(
+  // hook) to have done so already. Each slider clamps to its own min/max,
+  // because a slider's own `step` already keeps it on the grid.
+  const onChangeFontSize = useCallback(
     (size: number) => {
       if (prefs === null) return;
-      write({ typography: { ...prefs.typography, size: nearestTextSizePreset(size) } });
-    },
-    [prefs, write],
-  );
-
-  const onChangeLineHeight = useCallback(
-    (lineHeight: number) => {
-      if (prefs === null) return;
-      write({ typography: { ...prefs.typography, lineHeight: clamp(lineHeight, 1.0, 2.0) } });
+      write({
+        typography: { ...prefs.typography, size: clamp(size, FONT_SIZE_PT.min, FONT_SIZE_PT.max) },
+      });
     },
     [prefs, write],
   );
@@ -450,9 +430,18 @@ export function useReaderPrefs({ source }: UseReaderPrefsOptions = {}): UseReade
   const onChangeMargins = useCallback(
     (margins: number) => {
       if (prefs === null) return;
-      write({ typography: { ...prefs.typography, margins: clamp(margins, 0, 48) } });
+      write({ typography: { ...prefs.typography, margins: clamp(margins, 0, 64) } });
     },
     [prefs, write],
+  );
+
+  // ZOOM IS A ONE-FIELD GROUP, SO NO SPREAD. Unlike font/layout/typography,
+  // `ZoomPrefs` has only `level` — there is no sibling field a patch could
+  // drop, so this writes the group directly, the same way `onSelectTheme`
+  // writes a top-level scalar with nothing to spread.
+  const onChangeZoom = useCallback(
+    (level: number) => write({ zoom: { level: clamp(level, ZOOM_LEVEL.min, ZOOM_LEVEL.max) } }),
+    [write],
   );
 
   // ─── Accessibility ─────────────────────────────────────────────────────────
@@ -595,10 +584,10 @@ export function useReaderPrefs({ source }: UseReaderPrefsOptions = {}): UseReade
     onSelectFontFamily,
     onSelectFlow,
     onSelectSpread,
-    onSelectTextSize,
-    onChangeLineHeight,
+    onChangeFontSize,
     onChangeLetterSpacing,
     onChangeMargins,
+    onChangeZoom,
     onToggleDyslexiaFont,
     onToggleRespectOsFontScale,
     onToggleReadableSpacing,
