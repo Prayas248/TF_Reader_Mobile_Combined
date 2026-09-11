@@ -17,14 +17,29 @@
 // with `satisfies` against the contract union, so the only ids the `Tabs` will
 // ever emit are members of that union. The cast turns a `string` back into the
 // typed member — the same pattern ThemeSection uses for `Theme`.
-import { StyleSheet, View } from 'react-native';
+//
+// "DOUBLE" IS SKIPPED ON A PHONE-SIZED SCREEN, NOT GREYED OUT. epub.js gates
+// `rendition.spread('double')` at `minSpreadWidth` 800 (EPUB_SPREAD_MIN_WIDTH),
+// so below that it is a silent no-op for EPUB — the Settings UI requirements
+// name two acceptable fixes (grey it out with a note, or omit it) and this
+// takes the omit path: `Tabs` has no per-item disabled state today, and adding
+// one to a shared control used by Theme/Flow/Typography elsewhere is a bigger
+// change than this section needs. PDF spread has no such gate and works at any
+// width, so a phone reader who only ever opens PDFs cannot pick "Double" from
+// here — a real trade-off both named options share, called out rather than
+// hidden (see the note this renders).
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { SectionHeader } from '@components/SectionHeader';
 import { Tabs } from '@components/Tabs';
 import type { LayoutPrefs } from '@/shared/contracts';
-import { space } from '@theme/tokens';
+import { color, space, type as typeScale } from '@theme/tokens';
 
-import { FLOW_OPTIONS, SPREAD_OPTIONS } from '@/features/personalization/prefsOptions';
+import {
+  EPUB_SPREAD_MIN_WIDTH,
+  FLOW_OPTIONS,
+  SPREAD_OPTIONS,
+} from '@/features/personalization/prefsOptions';
 
 export interface LayoutSectionProps {
   layout: LayoutPrefs;
@@ -33,6 +48,13 @@ export interface LayoutSectionProps {
 }
 
 export default function LayoutSection({ layout, onSelectFlow, onSelectSpread }: LayoutSectionProps) {
+  const { width } = useWindowDimensions();
+  const isPhoneWidth = width < EPUB_SPREAD_MIN_WIDTH;
+
+  const spreadOptions = isPhoneWidth
+    ? SPREAD_OPTIONS.filter((option) => option.id !== 'double')
+    : SPREAD_OPTIONS;
+
   return (
     <View style={styles.section} testID="layout-section">
       <View style={styles.group}>
@@ -48,11 +70,17 @@ export default function LayoutSection({ layout, onSelectFlow, onSelectSpread }: 
       <View style={styles.group}>
         <SectionHeader title="Page view" />
         <Tabs
-          tabs={[...SPREAD_OPTIONS]}
+          tabs={[...spreadOptions]}
           activeId={layout.spread}
           variant="segmented"
           onChange={(id) => onSelectSpread(id as LayoutPrefs['spread'])}
         />
+        {isPhoneWidth && (
+          <Text style={styles.note}>
+            Double needs an iPad-sized screen for EPUBs, so it&apos;s hidden here. PDFs support
+            double at any size.
+          </Text>
+        )}
       </View>
     </View>
   );
@@ -67,5 +95,11 @@ const styles = StyleSheet.create({
   },
   group: {
     gap: space.sm,
+  },
+  note: {
+    fontWeight: typeScale.smallLabel.weight,
+    fontSize: typeScale.smallLabel.size,
+    lineHeight: typeScale.smallLabel.lineHeight,
+    color: color.textSecondary,
   },
 });

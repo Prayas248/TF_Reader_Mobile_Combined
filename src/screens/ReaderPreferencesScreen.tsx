@@ -55,14 +55,15 @@ import FontSection from './ReaderPreferencesScreen.FontSection';
 import LayoutSection from './ReaderPreferencesScreen.LayoutSection';
 import ThemeSection from './ReaderPreferencesScreen.ThemeSection';
 import TypographySection from './ReaderPreferencesScreen.TypographySection';
+import ZoomSection from './ReaderPreferencesScreen.ZoomSection';
 
 const READ_FAILED_MESSAGE = "We couldn't load your reading preferences.";
 const SAVE_FAILED_MESSAGE = "That change didn't save. Try again.";
 
-// Four bars standing in for a header and its control, at roughly the height one
+// Bars standing in for a header and its control, at roughly the height one
 // section occupies, repeated per section so the page does not shorten when the
 // values land.
-const SKELETON_SECTIONS = ['theme', 'font', 'layout', 'typography'] as const;
+const SKELETON_SECTIONS = ['theme', 'font', 'layout', 'typography', 'zoom'] as const;
 
 export interface ReaderPreferencesScreenProps {
   /**
@@ -86,10 +87,10 @@ export default function ReaderPreferencesScreen({
     onSelectFontFamily,
     onSelectFlow,
     onSelectSpread,
-    onSelectTextSize,
-    onChangeLineHeight,
+    onChangeFontSize,
     onChangeLetterSpacing,
     onChangeMargins,
+    onChangeZoom,
     onRestoreDefaults,
     onRetry,
   } = useReaderPrefs({ source: prefsSource });
@@ -147,11 +148,13 @@ export default function ReaderPreferencesScreen({
         {/* ── 4 · Typography — Prayas ────────────────────────────────────── */}
         <TypographySection
           typography={prefs.typography}
-          onSelectTextSize={onSelectTextSize}
-          onChangeLineHeight={onChangeLineHeight}
+          onChangeFontSize={onChangeFontSize}
           onChangeLetterSpacing={onChangeLetterSpacing}
           onChangeMargins={onChangeMargins}
         />
+
+        {/* ── 5 · Zoom — PDF only, see ZoomSection's header note ──────────── */}
+        <ZoomSection level={prefs.zoom.level} onChangeZoom={onChangeZoom} />
 
         {/* ── Restore defaults ──────────────────────────────────────────────
             LAST, AND DELIBERATELY BELOW EVERY SECTION. It resets all eight
@@ -169,7 +172,7 @@ export default function ReaderPreferencesScreen({
         <View style={styles.restore}>
           <ListRow
             title="Restore defaults"
-            subtitle="Resets theme, font, layout, typography and accessibility"
+            subtitle="Resets theme, font, layout, typography, zoom and accessibility"
             variant="destructive"
             onPress={onRestoreDefaults}
           />

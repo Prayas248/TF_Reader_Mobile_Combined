@@ -9,87 +9,68 @@
 // `useReaderPrefs` and hands down `prefs.typography` and the four `on<Event>`
 // callbacks below.
 //
-// FOUR CONTROLS, EPUB ONLY. PDFs are fixed layout, so none of these reach a
+// THREE CONTROLS, EPUB ONLY. PDFs are fixed layout, so none of these reach a
 // PDF — the hint under the header says so, the same way FontSection's does.
 //
-// TEXT SIZE IS SIX FIXED PRESETS, NOT A FREE SLIDER — the one point the Week 3
-// plan calls out explicitly. It uses `Tabs`, the same segmented control Theme,
-// Font and Layout already use, rather than a new one (§10). A stored value
-// outside the six presets is handled the same way Theme handles `highContrast`
-// and Font handles an unlisted face: nothing highlighted, plus a note saying
-// so, rather than a picker that looks broken.
+// FONT SIZE IS A SLIDER OVER 10-32PT, NOT PRESETS — per the Personalization
+// Settings UI requirements (2026-09-11), which replaced the Week 3 plan's six
+// fixed presets with a stepper/slider so the range design intends. Bounds
+// come from `FONT_SIZE_PT`, shared with the hook's clamp so the two cannot
+// drift apart.
 //
-// THE OTHER THREE ARE SLIDERS THAT SAVE ON RELEASE ONLY. `Slider` exposes only
-// `onSlidingComplete`, so there is no per-tick handler here to wire by mistake.
-// Constraining the value — snapping text size to its nearest preset, clamping
-// each slider to its range — happens in the hook's callbacks, not here — see
-// the note above them in useReaderPrefs.ts — so this file only forwards what
-// the control reports.
+// LINE HEIGHT IS NOT SHOWN. `prefs.typography.lineHeight` is explicitly listed
+// as NOT WIRED in the reader WebView by the same requirements doc — showing a
+// control for a value the reader does not yet apply would let a reader "set"
+// something with no visible effect. The field itself, and its write path, are
+// untouched in the contract/store; only this section's control is gone.
+//
+// ALL THREE ARE SLIDERS THAT SAVE ON RELEASE ONLY. `Slider` exposes only
+// `onSlidingComplete`, so there is no per-tick handler here to wire by
+// mistake. Clamping each value to its range happens in the hook's callbacks,
+// not here — see the note above them in useReaderPrefs.ts — so this file only
+// forwards what the control reports.
+//
+// LETTER SPACING READS "None" AT ZERO, NOT "0px" — the requirements are
+// explicit that zero must not look like a numeric setting, since the reader
+// omits the CSS rule entirely at that value rather than emitting `0px`.
 import { StyleSheet, Text, View } from 'react-native';
 
 import { SectionHeader } from '@components/SectionHeader';
 import { Slider } from '@components/Slider';
-import { Tabs } from '@components/Tabs';
 import type { TypographyPrefs } from '@/shared/contracts';
 import { color, space, type as typeScale } from '@theme/tokens';
 
-import { TEXT_SIZE_OPTIONS } from '@/features/personalization/prefsOptions';
+import { FONT_SIZE_PT } from '@/features/personalization/prefsOptions';
 
 export interface TypographySectionProps {
   typography: TypographyPrefs;
-  onSelectTextSize: (size: number) => void;
-  onChangeLineHeight: (lineHeight: number) => void;
+  onChangeFontSize: (size: number) => void;
   onChangeLetterSpacing: (spacing: number) => void;
   onChangeMargins: (margins: number) => void;
 }
 
 export default function TypographySection({
   typography,
-  onSelectTextSize,
-  onChangeLineHeight,
+  onChangeFontSize,
   onChangeLetterSpacing,
   onChangeMargins,
 }: TypographySectionProps) {
-  // A value from outside the six presets — another device, or a value this
-  // picker predates. Same handling as Theme's `highContrast` and Font's
-  // unlisted faces: `Tabs` already renders nothing active, which is honest,
-  // but a picker with no selection and no explanation reads as broken rather
-  // than as "your current size lives somewhere else."
-  const unmatchedTextSize = !TEXT_SIZE_OPTIONS.some(
-    (option) => option.id === String(typography.size),
-  );
-
   return (
     <View style={styles.section} testID="typography-section">
       <SectionHeader title="Typography" />
       <Text style={styles.hint}>EPUB only. PDFs use a fixed layout and ignore these.</Text>
 
       <View style={styles.group}>
-        <SectionHeader title="Text size" />
-        <Tabs
-          tabs={[...TEXT_SIZE_OPTIONS]}
-          activeId={String(typography.size)}
-          variant="segmented"
-          onChange={(id) => onSelectTextSize(Number(id))}
-        />
-        {unmatchedTextSize && (
-          <Text style={styles.note}>
-            Your current text size was set elsewhere and is not one of these presets.
-          </Text>
-        )}
-      </View>
-
-      <View style={styles.group}>
-        <SectionHeader title="Line height" />
+        <SectionHeader title="Font size" />
         <Slider
-          testID="typography-line-height-slider"
-          value={typography.lineHeight}
-          minimumValue={1.0}
-          maximumValue={2.0}
-          step={0.1}
-          onSlidingComplete={onChangeLineHeight}
+          testID="typography-font-size-slider"
+          value={typography.size}
+          minimumValue={FONT_SIZE_PT.min}
+          maximumValue={FONT_SIZE_PT.max}
+          step={FONT_SIZE_PT.step}
+          onSlidingComplete={onChangeFontSize}
         />
-        <Text style={styles.readout}>{typography.lineHeight.toFixed(1)}×</Text>
+        <Text style={styles.readout}>{typography.size}pt</Text>
       </View>
 
       <View style={styles.group}>
@@ -102,7 +83,9 @@ export default function TypographySection({
           step={0.5}
           onSlidingComplete={onChangeLetterSpacing}
         />
-        <Text style={styles.readout}>{typography.spacing}px</Text>
+        <Text style={styles.readout}>
+          {typography.spacing === 0 ? 'None' : `${typography.spacing}px`}
+        </Text>
       </View>
 
       <View style={styles.group}>
@@ -111,7 +94,7 @@ export default function TypographySection({
           testID="typography-margins-slider"
           value={typography.margins}
           minimumValue={0}
-          maximumValue={48}
+          maximumValue={64}
           step={4}
           onSlidingComplete={onChangeMargins}
         />

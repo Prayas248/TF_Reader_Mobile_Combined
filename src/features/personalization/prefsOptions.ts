@@ -95,21 +95,38 @@ export const SPREAD_OPTIONS = [
   { id: 'double', label: 'Double' },
 ] as const satisfies readonly SpreadOption[];
 
-// ─── Typography — text size ─────────────────────────────────────────────────
+// ─── Typography — font size ──────────────────────────────────────────────────
 
-// SIX FIXED PRESETS, NOT A FREE SLIDER — the Week 3 plan is explicit on this
-// point alone among the four Typography controls. `Tabs` takes a string `id`,
-// so each preset's point size is stored as its string form and parsed back to
-// a number at the call site, the same way `LayoutSection` casts a `Tabs`
-// `onChange` id back to its contract union.
-export const TEXT_SIZE_OPTIONS = [
-  { id: '14', label: '14pt' },
-  { id: '16', label: '16pt' },
-  { id: '18', label: '18pt' },
-  { id: '20', label: '20pt' },
-  { id: '22', label: '22pt' },
-  { id: '24', label: '24pt' },
-] as const satisfies readonly TabItem[];
+// A RANGE, NOT PRESETS — per the Personalization Settings UI requirements
+// (2026-09-11), font size is a stepper/slider over 10-32pt, replacing the six
+// fixed presets this section used to offer. Centralised the same way
+// FONT_SCALE_MULTIPLIER is below: the hook's clamp and the section's slider
+// bounds read one number each, rather than two literals kept in step by hand.
+export const FONT_SIZE_PT = {
+  min: 10,
+  max: 32,
+  step: 1,
+} as const;
+
+// ─── Layout — spread on a phone-sized screen ────────────────────────────────
+
+// epub.js gates `rendition.spread('double')` at this exact viewport width
+// (its own `minSpreadWidth`), so below it "double" is a no-op for EPUB — see
+// prefs.ts's ZoomPrefs/LayoutPrefs and the Settings UI requirements' §7. PDF
+// spread has no such gate and works at any width; this constant only decides
+// whether THIS SCREEN offers the "Double" option, not what the reader does
+// with a value already stored.
+export const EPUB_SPREAD_MIN_WIDTH = 800;
+
+// ─── Zoom (PDF only) ─────────────────────────────────────────────────────────
+
+// 1.0 = 100%. `ZoomPrefs.level` is unbounded in the contract (same reasoning
+// as FONT_SCALE_MULTIPLIER below), so the on-screen bounds live here.
+export const ZOOM_LEVEL = {
+  min: 0.5,
+  max: 3.0,
+  step: 0.25,
+} as const;
 
 // ─── Accessibility — font scale multiplier ──────────────────────────────────
 
