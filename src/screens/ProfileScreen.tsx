@@ -64,7 +64,7 @@
 // earlier draft of this pass's own brief asked for all five to go static on
 // the mistaken premise that none of them had a destination.
 import { useCallback, type ReactNode } from 'react';
-import { useNavigation, type NavigationProp, type CompositeNavigationProp } from '@react-navigation/native';
+import { useNavigation, type CompositeNavigationProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -78,27 +78,19 @@ import { deleteRefreshToken } from '@store/secureStorage';
 import { useInstitutionStore } from '@store/institutionStore';
 import { usePendingIntentStore } from '@store/pendingIntentStore';
 import { useSessionStore } from '@store/sessionStore';
-import type {
-  ProfileStackParamList,
-  RootStackParamList,
-  RootTabParamList,
-} from '@navigation/types';
+import type { ProfileStackParamList, RootTabParamList } from '@navigation/types';
 import { color, radius, space, type } from '@theme/tokens';
 import { getInitials } from '@utils/initials';
 
-// This screen navigates in three directions, so the type composes three props.
+// This screen navigates in two directions, so the type composes two props.
 // Same shape as SearchScreen, which has the same problem: its own stack first,
-// then the tab and root props.
+// then the tab prop.
 //
 //   ProfileStack   ReaderPreferences, pushed onto this screen's own stack
 //   Tab            nested screens in sibling tabs (InstitutionList in Catalogue)
-//   RootStack      the dev Gallery, which sits above the tabs
 type Nav = CompositeNavigationProp<
   NativeStackNavigationProp<ProfileStackParamList, 'ProfileHome'>,
-  CompositeNavigationProp<
-    BottomTabNavigationProp<RootTabParamList, 'Profile'>,
-    NavigationProp<RootStackParamList>
-  >
+  BottomTabNavigationProp<RootTabParamList, 'Profile'>
 >;
 
 // Composed from the spacing scale rather than written as 20, so no bare number
@@ -238,27 +230,6 @@ export default function ProfileScreen() {
     </Pressable>
   );
 
-  // Same tinted-card treatment as `changeInstitutionAction` — this is the
-  // other real destination behind the same icon/action, offered instead of
-  // it only when there is no institution yet to change.
-  const selectInstitutionAction = (
-    <Pressable
-      onPress={handleChangeInstitution}
-      style={styles.actionCard}
-      accessibilityRole="button"
-      accessibilityLabel="Select institution"
-    >
-      <View style={styles.rowIconContainer}>
-        <Ionicons name="business-outline" size={SETTING_ICON_SIZE} color={color.primary} />
-      </View>
-      <View style={styles.actionCardText}>
-        <Text style={styles.actionCardLabel}>Select institution</Text>
-        <Text style={styles.actionCardSubtitle}>Required to access your library</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={20} color={color.primary} />
-    </Pressable>
-  );
-
   return (
     // Scrolls because the row count is fixed and already taller than a small
     // handset — the settings block, sign out and the dev entry cannot all fit.
@@ -330,11 +301,6 @@ export default function ProfileScreen() {
                   </View>
                 </View>
               </View>
-
-              {/* Decorative only, restored on later explicit instruction —
-                  no Pressable, no accessibilityRole, nothing wired to it.
-                  `handleChangeInstitution` lives on the row below instead. */}
-              <Ionicons name="chevron-forward" size={20} color={color.textSecondary} />
             </View>
           </View>
 
@@ -423,8 +389,10 @@ export default function ProfileScreen() {
               showing it empty: that mode has no institution to scope. */}
           {!isAuthenticated && (
             <View style={styles.section}>
-              <SectionHeader title="Institution" emphasis="editorial" />
-              {selectedInstitution !== null ? (
+              <View style={styles.sectionHeaderInset}>
+                <SectionHeader title="Institution" emphasis="editorial" />
+              </View>
+              {selectedInstitution !== null && (
                 <>
                   {/* Crest and name come from the store, and `InstitutionRow`
                       already renders exactly that pair with the initials
@@ -437,8 +405,6 @@ export default function ProfileScreen() {
                   />
                   {changeInstitutionAction}
                 </>
-              ) : (
-                selectInstitutionAction
               )}
             </View>
           )}
@@ -471,7 +437,9 @@ export default function ProfileScreen() {
               decision, not this screen's. The row is drawn without the
               number rather than with an invented one. */}
       <View style={styles.section}>
-        <SectionHeader title="Reader experience" emphasis="editorial" />
+        <View style={styles.sectionHeaderInset}>
+          <SectionHeader title="Reader experience" emphasis="editorial" />
+        </View>
         {/* ONE ROUNDED CARD PER GROUP, not three flat edge-to-edge rows — on
             explicit instruction to club the group's rows together the way
             the mockup does. `overflow: 'hidden'` is what clips `ListRow`'s
@@ -509,7 +477,9 @@ export default function ProfileScreen() {
       </View>
 
       <View style={styles.section}>
-        <SectionHeader title="Preferences & system" emphasis="editorial" />
+        <View style={styles.sectionHeaderInset}>
+          <SectionHeader title="Preferences & system" emphasis="editorial" />
+        </View>
         <View style={styles.groupCard}>
           <ListRow
             title="Notifications"
@@ -569,33 +539,6 @@ export default function ProfileScreen() {
         </Pressable>
       )}
 
-      {/* THE ONLY WAY INTO THE GALLERY, and deliberately the only one.
-
-          `GalleryScreen` has been registered in RootNavigator since P0-6 with
-          nothing linking to it, so the review surface was code that ran nowhere.
-          This is the entry point.
-
-          WHY `__DEV__` AND NOT A CONFIG FLAG: CONVENTIONS §9 requires that
-          "nothing in the UI may navigate to it in a release build", and its own
-          open questions list "what keeps GalleryScreen out of a release build"
-          as unresolved. `__DEV__` is false in a production bundle and Metro's
-          minifier drops the whole branch, so the answer is enforced by the
-          bundler rather than by remembering. A runtime flag would ship the
-          button and hide it, which is a weaker guarantee.
-
-          The route itself stays registered — removing it would mean editing
-          Keshav's navigator, and an unreachable route ships no UI. */}
-      {__DEV__ && (
-        <View style={styles.dev}>
-          <Text style={styles.groupLabel}>Developer</Text>
-          <ListRow
-            title="State Gallery"
-            subtitle="Every component, variant and state — dev builds only"
-            variant="chevron"
-            onPress={() => navigation.navigate('Gallery')}
-          />
-        </View>
-      )}
     </ScrollView>
   );
 }
@@ -794,10 +737,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Shared by `changeInstitutionAction` and `selectInstitutionAction` — the
-  // tinted, rounded card the mockup draws for this action, deliberately not
-  // `ListRow`'s own plain white hairline-separated look (see the note beside
-  // `changeInstitutionAction`'s own definition for why).
+  // The tinted, rounded card the mockup draws for `changeInstitutionAction`,
+  // deliberately not `ListRow`'s own plain white hairline-separated look (see
+  // the note beside that element's own definition for why).
   // `marginTop: space.sm`, not `space.md` — the gap under the identity card
   // read as too large once the card itself stopped carrying a bottom
   // hairline/margin of its own (see `identityCard`'s note), so this is now
@@ -813,10 +755,6 @@ const styles = StyleSheet.create({
     backgroundColor: color.surface,
     borderRadius: radius.sheet,
   },
-  actionCardText: {
-    flex: 1,
-    gap: space.xs / 2,
-  },
   actionCardLabel: {
     flex: 1,
     fontFamily: type.cardTitle.fontFamily,
@@ -824,14 +762,16 @@ const styles = StyleSheet.create({
     lineHeight: type.body.lineHeight,
     color: color.textPrimary,
   },
-  actionCardSubtitle: {
-    fontFamily: type.editorialMeta.fontFamily,
-    fontSize: type.editorialMeta.size,
-    lineHeight: type.editorialMeta.lineHeight,
-    color: color.textSecondary,
-  },
   section: {
     marginTop: space.lg,
+  },
+  // `SectionHeader` sets no outer padding of its own — its doc says the
+  // parent owns where it sits — but `section` above only ever set a vertical
+  // margin, so the heading rendered flush against the screen edge while
+  // `groupCard`/`actionCard` below it carry their own `marginHorizontal:
+  // space.md`. This lines the heading up with everything under it.
+  sectionHeaderInset: {
+    paddingHorizontal: space.md,
   },
   // Clubs a group's rows into one bordered, rounded surface instead of three
   // flat edge-to-edge ones — see the note beside its own JSX for why
@@ -865,22 +805,5 @@ const styles = StyleSheet.create({
     fontSize: type.button.size,
     lineHeight: type.button.lineHeight,
     color: color.error,
-  },
-  // The developer block sits further down again — it is not part of the settings
-  // list and should not look like one more group of it.
-  dev: {
-    marginTop: space.xl,
-  },
-  // One style for both group labels. These were two identical declarations,
-  // `sectionLabel` and `devLabel`, which is two places to edit the next time the
-  // type scale moves.
-  groupLabel: {
-    fontWeight: type.smallLabel.weight,
-    fontFamily: type.smallLabel.fontFamily,
-    fontSize: type.smallLabel.size,
-    lineHeight: type.smallLabel.lineHeight,
-    color: color.textSecondary,
-    paddingHorizontal: space.md,
-    paddingBottom: space.xs,
   },
 });

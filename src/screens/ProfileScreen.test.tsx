@@ -207,21 +207,21 @@ describe('ProfileScreen account header, signed in', () => {
 
 // The identity card merges what used to be two separate blocks (a plain
 // header plus a separate InstitutionRow) into one, and — per product
-// decision — takes no press: `Change institution` is the only real, working
-// destination, and it stays its own row below the card rather than becoming
-// the card's own tap target. The trailing chevron the Sept 2026 mockup draws
-// on the card is visual only — see ProfileScreen.tsx's own file header note.
+// decision — takes no press and draws no chevron: `Change institution` is
+// the only real, working destination, and it stays its own row below the
+// card rather than becoming the card's own tap target.
 describe('ProfileScreen institutional identity card', () => {
   it('shows the institution, an active-access line and the address', async () => {
     selectInstitution(OXFORD);
     signInInstitutionally(OXFORD);
     await render(<ProfileScreen />);
 
-    // The name renders twice by design — once as the headline, once again in
-    // the address line beside the country, mirroring the name-then-country
-    // pairing InstitutionRow and InstitutionDetailView already show.
-    expect(screen.getAllByText('University of Oxford')).toHaveLength(2);
-    expect(screen.getByText('Active access')).toBeTruthy();
+    // ONCE, not twice. The card used to repeat the name in its address line
+    // for want of a location field; the meta panel shows `city`/`code` there
+    // now, so the headline is the only place the name appears.
+    expect(screen.getAllByText('University of Oxford')).toHaveLength(1);
+    expect(screen.getByText('ACTIVE ACCESS')).toBeTruthy();
+    expect(screen.getByText('Oxford · OXF')).toBeTruthy();
     expect(screen.getByText('United Kingdom')).toBeTruthy();
   });
 
@@ -242,7 +242,22 @@ describe('ProfileScreen institutional identity card', () => {
     // row (accessibilityRole="button", labelled by the institution's name) —
     // gone now that the merged card draws the same pair non-interactively.
     expect(screen.queryAllByRole('button', { name: 'University of Oxford' })).toHaveLength(0);
-    expect(screen.getAllByText('University of Oxford')).toHaveLength(2);
+    expect(screen.getAllByText('University of Oxford')).toHaveLength(1);
+  });
+
+  // `signIn` is only present on an institution fetched from the detail
+  // endpoint, so the authentication half of the country line has to survive
+  // its absence as well as its presence — OXFORD above covers the absent case.
+  it('names the sign-in method beside the country when the detail fetch supplied one', async () => {
+    const withSignIn: Institution = {
+      ...OXFORD,
+      signIn: { method: 'Shibboleth', idpHint: 'oxford' },
+    };
+    selectInstitution(withSignIn);
+    signInInstitutionally(withSignIn);
+    await render(<ProfileScreen />);
+
+    expect(screen.getByText('United Kingdom · Shibboleth authenticated')).toBeTruthy();
   });
 
   it('still lets the reader change institution from the row beneath the card', async () => {
@@ -313,13 +328,6 @@ describe('ProfileScreen institution, from the store', () => {
     expect(screen.queryByLabelText('Deakin University logo')).toBeNull();
     expect(screen.getByText('DU')).toBeTruthy();
   });
-
-  it('offers the picker instead when no institution is selected', async () => {
-    selectInstitution(null);
-    await render(<ProfileScreen />);
-    expect(screen.getByRole('button', { name: 'Select institution' })).toBeTruthy();
-    expect(screen.queryByText('University of Oxford')).toBeNull();
-  });
 });
 
 describe('ProfileScreen change institution', () => {
@@ -335,13 +343,6 @@ describe('ProfileScreen change institution', () => {
   it('pushes screen 06 from the institution row itself', async () => {
     await render(<ProfileScreen />);
     fireEvent.press(screen.getByRole('button', { name: 'University of Oxford' }));
-    expect(mockNavigate).toHaveBeenCalledWith('Catalogue', { screen: 'InstitutionList' });
-  });
-
-  it('pushes screen 06 from the empty-state row', async () => {
-    selectInstitution(null);
-    await render(<ProfileScreen />);
-    fireEvent.press(screen.getByRole('button', { name: 'Select institution' }));
     expect(mockNavigate).toHaveBeenCalledWith('Catalogue', { screen: 'InstitutionList' });
   });
 });
@@ -432,7 +433,7 @@ describe('ProfileScreen reading preferences', () => {
 
   it('keeps its subtitle and chevron, so only the destination changed', async () => {
     await render(<ProfileScreen />);
-    expect(screen.getByText('Font size, theme')).toBeTruthy();
+    expect(screen.getByText('Themes, fonts, margins & layout')).toBeTruthy();
   });
 });
 
@@ -456,32 +457,6 @@ describe('ProfileScreen accessibility', () => {
 
   it('shows its subtitle', async () => {
     await render(<ProfileScreen />);
-    expect(screen.getByText('Text, display and screen reader options')).toBeTruthy();
-  });
-});
-
-describe('ProfileScreen developer entry', () => {
-  // `__DEV__` is a global under Jest rather than an inlined constant, so both
-  // sides of the branch are reachable here. In a release bundle Metro replaces
-  // it with `false` and drops the branch outright — which is the guarantee, and
-  // the half a test cannot observe.
-  const globalWithDev = globalThis as typeof globalThis & { __DEV__: boolean };
-
-  afterEach(() => {
-    globalWithDev.__DEV__ = true;
-  });
-
-  it('offers the State Gallery in a dev build', async () => {
-    globalWithDev.__DEV__ = true;
-    await render(<ProfileScreen />);
-    fireEvent.press(screen.getByRole('button', { name: 'State Gallery' }));
-    expect(mockNavigate).toHaveBeenCalledWith('Gallery');
-  });
-
-  it('renders no gallery entry when __DEV__ is false', async () => {
-    globalWithDev.__DEV__ = false;
-    await render(<ProfileScreen />);
-    expect(screen.queryByRole('button', { name: 'State Gallery' })).toBeNull();
-    expect(screen.queryByText('Developer')).toBeNull();
+    expect(screen.getByText('High contrast, text scaling & screen reader')).toBeTruthy();
   });
 });

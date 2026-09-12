@@ -141,6 +141,23 @@ const TAB_ROOT_ROUTE_NAMES = new Set([
   'ProfileHome',
 ]);
 
+// `ItemDetail` is reachable from several different screens in each stack
+// (a tab root, a shelf, an institution page…), so a fixed "Item Details"
+// label cannot say which one "back" returns to. `back.title` is React
+// Navigation's own resolved title for whichever screen is actually
+// underneath on THIS push — the same value an iOS back button would show —
+// so the header names that screen instead of repeating a generic label.
+// `options.title` ('Item Details') stays registered as the fallback for the
+// one case `back` cannot cover: no previous screen in the stack.
+function itemDetailHeaderTitle(
+  routeName: string,
+  options: NativeStackHeaderProps['options'],
+  back: NativeStackHeaderProps['back'],
+) {
+  if (routeName === 'ItemDetail' && back?.title !== undefined) return back.title;
+  return options.title ?? routeName;
+}
+
 function AppHeader({ route, options, back, navigation }: NativeStackHeaderProps) {
   const insets = useSafeAreaInsets();
   const selectedInstitution = useInstitutionStore((s) => s.selectedInstitution);
@@ -150,7 +167,7 @@ function AppHeader({ route, options, back, navigation }: NativeStackHeaderProps)
 
   return (
     <TopAppBar
-      title={options.title ?? route.name}
+      title={itemDetailHeaderTitle(route.name, options, back)}
       onBack={back ? navigation.goBack : undefined}
       topInset={insets.top}
       action={
@@ -226,10 +243,13 @@ function CatalogueNavigator() {
         component={InstitutionDetailScreen}
         options={{ title: 'Institution' }}
       />
-      {/* ONE TITLE FOR EVERY WORK TYPE AND FORMAT — a book, a journal article
-          and an audiobook all push this same route, and 'Book Details' used
-          to stay on screen for an audiobook (only 'article' ever narrowed
-          it, to 'Article Details') even though nothing here is a book. See
+      {/* The header shows where "back" returns to, not a fixed label — see
+          `itemDetailHeaderTitle`'s own comment above. `title` here is only
+          the fallback for no previous screen, and it stays work-type-
+          agnostic on purpose: a book, a journal article and an audiobook all
+          push this same route, and 'Book Details' used to stay on screen for
+          an audiobook (only 'article' ever narrowed it, to 'Article
+          Details') even though nothing here is a book. See
           ItemDetailScreen.tsx's own header for the shared route reasoning. */}
       <CatalogueStack.Screen
         name="ItemDetail"
