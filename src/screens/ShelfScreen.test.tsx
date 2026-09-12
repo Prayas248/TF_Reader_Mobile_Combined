@@ -138,6 +138,7 @@ function fakeSource(getShelf: DataSource['getShelf']): DataSource {
     getInstitutions: unused,
     getInstitution: unused,
     getItemsBatch: unused,
+    getWork: unused,
   };
 }
 

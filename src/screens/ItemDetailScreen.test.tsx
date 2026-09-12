@@ -196,6 +196,7 @@ function fakeSource(getPublication: DataSource['getPublication']): DataSource {
     getInstitutions: unused,
     getInstitution: unused,
     getItemsBatch: unused,
+    getWork: unused,
   };
 }
 
@@ -318,6 +319,7 @@ describe('ItemDetailScreen endpoint choice', () => {
       getInstitutions: unused,
       getInstitution: unused,
       getItemsBatch: unused,
+      getWork: unused,
     };
   }
 

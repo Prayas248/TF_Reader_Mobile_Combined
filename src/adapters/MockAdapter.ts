@@ -10,7 +10,7 @@
 // point: if the normalizer mishandles wokay's OPDS, this adapter surfaces it
 // today instead of the day the backend lands.
 import type { BookId } from '@/shared/types/primitives';
-import type { BatchItemsResult, Catalogue, Publication, Shelf, SortOrder } from '@model/types';
+import type { BatchItemsResult, Catalogue, Publication, Shelf, SortOrder, WorkFeed } from '@model/types';
 import type { DataSource, InstitutionQueryParams } from '@adapters/InstitutionSource';
 import type { ShelfQuery } from '@adapters/CatalogueSource';
 import { CatalogueError, CatalogueFailure } from '@model/errors';
@@ -249,6 +249,33 @@ export class MockAdapter implements DataSource {
       items.push(item);
     }
     return { items, notFound, denied };
+  }
+
+  async getWork(institutionId: string, workId: string): Promise<WorkFeed> {
+    await this.simulate(workId);
+    this.assertKnownInstitution(institutionId);
+    // Mock returns a simple two-volume navigation feed for any workId so the
+    // JournalScreen can be exercised without a real backend.
+    return {
+      kind: 'navigation',
+      title: 'Mock Journal',
+      children: [
+        {
+          title: 'Volume 01',
+          href: `/opds/v1/institutions/${institutionId}/works/mock-vol-1`,
+          shelfId: 'mock-vol-1',
+          target: 'works',
+          workId: 'mock-vol-1',
+        },
+        {
+          title: 'Volume 02',
+          href: `/opds/v1/institutions/${institutionId}/works/mock-vol-2`,
+          shelfId: 'mock-vol-2',
+          target: 'works',
+          workId: 'mock-vol-2',
+        },
+      ],
+    };
   }
 
   async getInstitutions(params?: InstitutionQueryParams): Promise<Institution[]> {

@@ -9,7 +9,7 @@
 // Both implementations are held to `conformance.ts`. If a method's contract
 // changes, change it here and the suite will fail for both until they agree.
 import type { BookId } from '@/shared/types/primitives';
-import type { BatchItemsResult, Catalogue, Publication, Shelf, SortOrder } from '@model/types';
+import type { BatchItemsResult, Catalogue, Publication, Shelf, SortOrder, WorkFeed } from '@model/types';
 import type { BrowseFilters } from '@search/browseLink';
 
 // Everything a shelf request can narrow or order by, beyond page — an OPTIONAL
@@ -81,4 +81,10 @@ export interface CatalogueSource {
   // resolves normally, so one bad id never fails the whole call. Only
   // rejects CatalogueFailure(TOO_MANY_IDS) if more than 100 ids are requested.
   getItemsBatch(ids: BookId[]): Promise<BatchItemsResult>;
+
+  // Journal hierarchy — GET /opds/v1/institutions/{institutionId}/works/{workId}.
+  // workId is a CatalogueItem whose workType is JOURNAL, VOLUME, or ISSUE.
+  // Returns navigation children (volumes/issues) or publications (articles).
+  // Rejects CatalogueFailure(NOT_FOUND) if the workId is unknown or not PUBLISHED.
+  getWork(institutionId: string, workId: string): Promise<WorkFeed>;
 }
