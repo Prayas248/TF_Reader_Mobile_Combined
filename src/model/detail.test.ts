@@ -1,9 +1,13 @@
 // src/model/detail.test.ts
 //
 // `buildItemDetail` only copies, so the tests that matter are the ones about what
-// it DOES NOT copy. A mapper that quietly widened — pulling `subjects` across, or
-// flattening `access.tier` up to the top level — would still pass every
+// it DOES NOT copy. A mapper that quietly widened — pulling `acquisition` across,
+// or flattening `access.tier` up to the top level — would still pass every
 // present-tense assertion while undoing the reason the model exists.
+//
+// `subjects` moved from "deliberately excluded" to "shared" once screen 04's
+// article view grew a real Subjects section (the journal-UI redesign) — it is
+// no longer an example of unwanted widening, see the "stays narrow" tests below.
 //
 // Builders rather than shared literals, so no test can mutate another's fixture
 // and none depends on a field it did not set itself — same approach as
@@ -68,6 +72,7 @@ describe('buildItemDetail copies the shared fields', () => {
       numberOfPages: 212,
       format: 'PDF',
       description: 'A study of legal personhood.',
+      subjects: ['Law', 'Technology'],
       access,
     });
   });
@@ -164,6 +169,17 @@ describe('buildItemDetail with fields missing', () => {
 
     expect(detail.authors).toEqual([]);
   });
+
+  // Publication.subjects is required by the real contract, but a handful of
+  // existing tests build a Publication through an unsafe cast that skips it —
+  // buildItemDetail must not crash on the resulting `undefined` at runtime.
+  it('defaults subjects to an empty array when the publication has none', () => {
+    const publication = { ...aPublication(), subjects: undefined } as unknown as Publication;
+
+    const detail = buildItemDetail({ publication, workType: 'article', access: anAccessResult() });
+
+    expect(detail.subjects).toEqual([]);
+  });
 });
 
 // The tests with teeth. The model is a narrowing, and a narrowing that quietly
@@ -188,6 +204,7 @@ describe('buildItemDetail stays narrow', () => {
         'numberOfPages',
         'published',
         'publisher',
+        'subjects',
         'subtitle',
         'title',
         'workType',
@@ -195,12 +212,12 @@ describe('buildItemDetail stays narrow', () => {
     );
   });
 
-  // These three are on Publication and deliberately left off the shared
-  // model: `subjects` because neither detail mockup shows it, and
-  // `acquisition` and `language` because they belong to the adapter and to
-  // resolveAccess rather than to a screen. `format` USED to be on this list —
-  // screen 05's format display strip is a real caller now, so it moved to the
-  // model proper (see the top-level "carries every shared field" test).
+  // `acquisition` and `language` are on Publication and deliberately left off
+  // the shared model: both belong to the adapter and to resolveAccess rather
+  // than to a screen. `format`/`subjects` USED to be on this list — screen 05's
+  // format display strip and screen 04's Subjects section are real callers now,
+  // so both moved to the model proper (see the top-level "carries every shared
+  // field" test).
   it('does not copy publication fields the detail screens do not show', () => {
     const keys = Object.keys(
       buildItemDetail({
@@ -210,7 +227,6 @@ describe('buildItemDetail stays narrow', () => {
       }),
     );
 
-    expect(keys).not.toContain('subjects');
     expect(keys).not.toContain('acquisition');
     expect(keys).not.toContain('language');
     expect(keys).not.toContain('thumbnailUrl');

@@ -42,6 +42,10 @@ export interface ItemDetail {
   publisher?: string;
   isbn?: string;
   numberOfPages?: number;
+  // Carried through from Publication.subjects — previously read there but
+  // dropped before reaching either detail screen. Screen 04 (article) renders
+  // these as a Subjects section; screen 05 (book) does not read this field.
+  subjects: string[];
   // The one confirmed format ('PDF' | 'EPUB' | 'AUDIO') — a publication has
   // exactly one, so this is display data, not a choice. Absent only when
   // normalize.ts could not derive one (a `subscribe` rel carries no file).
@@ -87,6 +91,11 @@ export function buildItemDetail({
     publisher: publication.publisher,
     isbn: publication.isbn,
     numberOfPages: publication.numberOfPages,
+    // `?? []` rather than a bare copy: Publication.subjects is required by the
+    // real contract, but several existing tests build a Publication through
+    // an unsafe cast (`as never`/`as unknown as Publication`) that skips it
+    // entirely — defend against that here rather than in every fixture.
+    subjects: publication.subjects ?? [],
     format: publication.format,
     description: publication.description,
     access,
