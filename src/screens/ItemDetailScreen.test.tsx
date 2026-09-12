@@ -1029,10 +1029,96 @@ describe('ItemDetailScreen article presentation (renderArticleContent)', () => {
     expect(screen.getByText('Joshua C. Gellers')).toBeTruthy();
   });
 
-  it('renders the published date', async () => {
+  // Lives inside the "Published in" card now, not a standalone line under the
+  // title — see that describe block below for the rest of the card's tests.
+  it('renders the published date, human-formatted, inside the Published in card', async () => {
     await render(renderArticleContent(anArticleDetail(), jest.fn()));
 
-    expect(screen.getByText(/2021-03-15/)).toBeTruthy();
+    expect(screen.getByText('Published online')).toBeTruthy();
+    expect(screen.getByText('15 March 2021')).toBeTruthy();
+  });
+
+  it('renders the Subjects section when the article has subjects', async () => {
+    await render(renderArticleContent(anArticleDetail(), jest.fn()));
+
+    expect(screen.getByText('Subjects')).toBeTruthy();
+    expect(screen.getByText('Law')).toBeTruthy();
+    expect(screen.getByText('Technology')).toBeTruthy();
+  });
+
+  it('renders no Subjects section when the article has none', async () => {
+    await render(renderArticleContent(anArticleDetail({ subjects: [] }), jest.fn()));
+
+    expect(screen.queryByText('Subjects')).toBeNull();
+  });
+
+  // Only present when opened from the journal drill-down (a route param, not
+  // anything on Publication — an article carries no parent-journal reference
+  // of its own). Absent for every other caller, e.g. a Search result.
+  // Journal/volume/issue lives in exactly ONE place on the page — the
+  // "Published in" card, alongside whatever article-specific facts
+  // (published date, page count) the publication also supplies. There is
+  // deliberately no second, separate eyebrow above the title any more: an
+  // earlier pass had both, and repeating the same three facts twice on one
+  // screen was the problem, not a feature.
+  describe('the "Published in" card', () => {
+    it('renders nothing extra when there is no journal context and no published/numberOfPages', async () => {
+      const detail = anArticleDetail({ published: undefined, numberOfPages: undefined });
+      await render(renderArticleContent(detail, jest.fn()));
+
+      expect(screen.queryByText('Published in')).toBeNull();
+      expect(screen.queryByText('Published online')).toBeNull();
+    });
+
+    it('renders the journal name and the volume/issue line when all three are known', async () => {
+      await render(
+        renderArticleContent(anArticleDetail(), jest.fn(), undefined, undefined, {
+          journalTitle: 'All Life',
+          volumeTitle: 'Volume 19',
+          issueTitle: 'Issue 4',
+        }),
+      );
+
+      expect(screen.getByText('Published in')).toBeTruthy();
+      expect(screen.getByText('All Life')).toBeTruthy();
+      expect(screen.getByText('Volume 19 · Issue 4')).toBeTruthy();
+    });
+
+    it('renders just the journal name when there is no volume/issue level', async () => {
+      await render(
+        renderArticleContent(anArticleDetail(), jest.fn(), undefined, undefined, {
+          journalTitle: 'All Life',
+        }),
+      );
+
+      expect(screen.getByText('All Life')).toBeTruthy();
+      expect(screen.queryByText(/volume|issue/i)).toBeNull();
+    });
+
+    it('renders the article-specific facts (published date, page count) alongside the journal identity', async () => {
+      const detail = anArticleDetail({ numberOfPages: 8 });
+      await render(
+        renderArticleContent(detail, jest.fn(), undefined, undefined, {
+          journalTitle: 'All Life',
+        }),
+      );
+
+      expect(screen.getByText('Published online')).toBeTruthy();
+      expect(screen.getByText('15 March 2021')).toBeTruthy();
+      expect(screen.getByText('8 pages')).toBeTruthy();
+    });
+
+    // The card should still earn its place with no journal context at all
+    // (e.g. an article opened outside the journal drill-down), as long as the
+    // publication itself supplies a fact worth showing.
+    it('renders with only article-specific facts when there is no journal context', async () => {
+      const detail = anArticleDetail({ numberOfPages: 8 });
+      await render(renderArticleContent(detail, jest.fn()));
+
+      expect(screen.queryByText('Published in')).toBeNull();
+      expect(screen.getByText('Published online')).toBeTruthy();
+      expect(screen.getByText('8 pages')).toBeTruthy();
+    });
   });
 
   it('renders the abstract under its own heading when present', async () => {
@@ -1058,6 +1144,36 @@ describe('ItemDetailScreen article presentation (renderArticleContent)', () => {
     await render(renderArticleContent(detail, jest.fn()));
 
     expect(screen.getByText('Subscription')).toBeTruthy();
+  });
+
+  // `resolveAccess`/`handleAction`'s 'signIn' branch never branches on
+  // workType — confirmed by reading the code, but nothing pinned it for the
+  // ARTICLE presentation specifically before this (only the book layout had
+  // an equivalent test, further down this file). `anArticleDetail`'s own
+  // `session: null` plus a licensed tier is exactly "signed out, non-open-
+  // access", the same scenario a journal article behind a Subscription/Elite
+  // tier hits.
+  it('offers Sign in, not Read, for a signed-out reader on a non-open-access article', async () => {
+    const detail = anArticleDetail({
+      acquisition: anAcquisition({ licenceModel: 'SUBSCRIPTION' }),
+    });
+    const onAction = jest.fn();
+
+    await render(renderArticleContent(detail, onAction));
+
+    expect(screen.getByText('Sign in')).toBeTruthy();
+    expect(screen.queryByText('Read')).toBeNull();
+    fireEvent.press(screen.getByText('Sign in'));
+    expect(onAction).toHaveBeenCalledWith('signIn');
+  });
+
+  it('offers Read, not Sign in, for an open-access article regardless of session', async () => {
+    const detail = anArticleDetail({ acquisition: anAcquisition({ licenceModel: 'OPEN_ACCESS' }) });
+
+    await render(renderArticleContent(detail, jest.fn()));
+
+    expect(screen.getByText('Read')).toBeTruthy();
+    expect(screen.queryByText('Sign in')).toBeNull();
   });
 
   it('renders the actions resolveAccess resolves, not an invented set', async () => {
@@ -1100,91 +1216,45 @@ describe('ItemDetailScreen article presentation (renderArticleContent)', () => {
     expect(screen.queryByText(/paperback|ebook price/i)).toBeNull();
   });
 
-  // The board's subtask for this trio is "disabled", not "absent" — see the
-  // comment above `UnavailableTag` in ItemDetailScreen.tsx. Citation and the
-  // five tabs ARE now visible, just inert; these three tests are the reason
-  // the old blanket "renders nothing" assertion for them had to go.
-  describe('citation, tabs and type label — shown disabled, not invented or hidden', () => {
-    it('shows Download citation, disabled, with no citation data behind it', async () => {
+  // Citation, the five tabs, and the "Research article" type label were all
+  // removed on explicit instruction (see ItemDetailScreen.tsx's own header):
+  // none has real data behind it, and a placeholder that will never resolve
+  // is worse than not showing it. These tests pin the removal.
+  describe('citation, tabs and type label — removed, not shown even muted', () => {
+    it('renders no Download citation row', async () => {
       await render(renderArticleContent(anArticleDetail(), jest.fn()));
 
-      const citation = screen.getByText('Download citation');
-      expect(citation).toBeTruthy();
-      // Nothing that looks like an actual citation string (author list, year,
-      // journal name) is ever built — there is no data to build one from.
-      expect(screen.queryByText(/\(20\d{2}\)/)).toBeNull();
+      expect(screen.queryByText('Download citation')).toBeNull();
     });
 
-    it('shows all five real tab labels, none of them functional', async () => {
+    it('renders no tab strip', async () => {
       await render(renderArticleContent(anArticleDetail(), jest.fn()));
 
-      expect(screen.getByText('Full Article')).toBeTruthy();
-      expect(screen.getByText('Figures & data')).toBeTruthy();
-      expect(screen.getByText('Citations')).toBeTruthy();
-      expect(screen.getByText('Metrics')).toBeTruthy();
-      expect(screen.getByText('PDF')).toBeTruthy();
-    });
-
-    // Proves this is not a relabelled instance of the real `Tabs` component —
-    // that component always renders an interactive `tablist`/`tab` role, and
-    // nothing here is meant to be switchable.
-    it('renders the tab row as inert, not as the real interactive Tabs component', async () => {
-      await render(renderArticleContent(anArticleDetail(), jest.fn()));
-
+      expect(screen.queryByText('Full Article')).toBeNull();
+      expect(screen.queryByText('Figures & data')).toBeNull();
+      expect(screen.queryByText('Citations')).toBeNull();
+      expect(screen.queryByText('Metrics')).toBeNull();
       expect(screen.queryByRole('tablist')).toBeNull();
       expect(screen.queryByRole('tab')).toBeNull();
-      expect(
-        screen.queryByRole('button', { name: /full article|figures|citations|metrics|^pdf$/i }),
-      ).toBeNull();
     });
 
-    // The tab row is a gap too, but it is not marked one: the five labels are
-    // real and it is only their CONTENT that is missing, so the row is drawn as
-    // the mockup's plain scrolling strip with a divider. `unavailable-tag`
-    // marks the two elements that have nothing behind them at all — citation
-    // and the type label — so there are two of these on this screen, not seven.
-    it('marks citation and the type label unavailable, but not the five tab labels', async () => {
+    it('renders no "Research article" type label', async () => {
       await render(renderArticleContent(anArticleDetail(), jest.fn()));
 
-      expect(screen.queryAllByTestId('unavailable-tag')).toHaveLength(2);
+      expect(screen.queryByText('Research article')).toBeNull();
+      expect(screen.queryByTestId('unavailable-tag')).toBeNull();
     });
 
-    it('shows the real mockup string "Research article", muted rather than invented copy', async () => {
-      await render(renderArticleContent(anArticleDetail(), jest.fn()));
-
-      expect(screen.getByText('Research article')).toBeTruthy();
-    });
-
-    // Muted styling alone reaches a sighted reader; a screen reader needs the
-    // "not confirmed" fact said explicitly, since the visible text is the same
-    // real mockup string a confirmed classification would also show.
-    it('tells a screen reader the classification is not confirmed, without changing the visible text', async () => {
-      await render(renderArticleContent(anArticleDetail(), jest.fn()));
-
-      expect(
-        screen.getByLabelText('Research article — not confirmed by the current contract'),
-      ).toBeTruthy();
-    });
-
-    // The type tag is `accessibilityRole="text"`, not a button or a tab — it is
-    // looked at, not pressed, same as AccessTierBadge one line above it.
-    it('renders the type label as non-interactive', async () => {
-      await render(renderArticleContent(anArticleDetail(), jest.fn()));
-
-      expect(screen.queryByRole('button', { name: /research article/i })).toBeNull();
-      expect(screen.queryByRole('tab', { name: /research article/i })).toBeNull();
-    });
-
-    // These three are metadata gaps, not access gaps — they must appear the
+    // These are metadata gaps, not access gaps — they must stay absent the
     // same way regardless of which tier or actions resolveAccess returned.
-    it('shows all three regardless of the resolved access state', async () => {
+    it('stays absent regardless of the resolved access state', async () => {
       const detail = anArticleDetail({ acquisition: anAcquisition({ licenceModel: 'ELITE' }) });
 
       await render(renderArticleContent(detail, jest.fn()));
 
-      expect(screen.getByText('Download citation')).toBeTruthy();
-      expect(screen.getByText('Research article')).toBeTruthy();
-      expect(screen.getByText('PDF')).toBeTruthy();
+      expect(screen.queryByText('Download citation')).toBeNull();
+      expect(screen.queryByText('Research article')).toBeNull();
+      expect(screen.queryByText('PDF')).toBeNull();
     });
   });
 
@@ -1192,7 +1262,10 @@ describe('ItemDetailScreen article presentation (renderArticleContent)', () => {
   // them from any Publication that carries them — but the board's screen 04
   // field list never asked for them, so renderArticleContent must not read them
   // even when they are present on the object it was handed.
-  it('renders no book-only fields even when the underlying data carries them', async () => {
+  // ISBN/publisher/format stay book-only. `numberOfPages` is the one
+  // exception — see the "Published in" card tests above for why it moved
+  // from "never read" to "read, inside the card".
+  it('renders no ISBN, publisher or format strip even when the underlying data carries them', async () => {
     const detail = anArticleDetail({
       isbn: '9780367211745',
       numberOfPages: 212,
@@ -1203,12 +1276,11 @@ describe('ItemDetailScreen article presentation (renderArticleContent)', () => {
     await render(renderArticleContent(detail, jest.fn()));
 
     expect(screen.queryByText(/isbn/i)).toBeNull();
-    expect(screen.queryByText(/pages/i)).toBeNull();
     expect(screen.queryByText(/publisher/i)).toBeNull();
+    expect(screen.getByText('212 pages')).toBeTruthy();
     // `format` joined `ItemDetail` for screen 05's display strip; the article
-    // branch must still never read it. Not asserting `queryByText('PDF')` is
-    // absent here — "PDF" legitimately appears as one of the five inert tab
-    // labels above, for an unrelated reason.
+    // branch must still never read it.
+    expect(screen.queryByText('PDF')).toBeNull();
     expect(screen.queryByTestId('format-strip')).toBeNull();
   });
 });

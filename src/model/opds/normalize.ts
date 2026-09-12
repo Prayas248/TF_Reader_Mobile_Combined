@@ -365,7 +365,28 @@ export function normalizeWorkFeed(doc: unknown): WorkFeed {
     feed.navigation !== undefined
       ? asArray(feed.navigation, 'work feed navigation').map(toNavLink)
       : [];
-  return { kind: 'navigation', title, ...cover, children };
+  // Journal-level metadata — optional, unconfirmed by wokay's contract. Same
+  // optional-parse shape as normalizePublication's own publisher/description/
+  // subjects/language above; absent here means JournalScreen renders no
+  // section for it, not a placeholder.
+  const publisher = metadata.publisher !== undefined
+    ? optString(asRecord(metadata.publisher, 'work feed publisher').name)
+    : undefined;
+  const subjects = toNames(metadata.subject);
+  return {
+    kind: 'navigation',
+    title,
+    ...cover,
+    ...(optString(metadata.description) !== undefined
+      ? { description: optString(metadata.description) as string }
+      : {}),
+    ...(subjects.length > 0 ? { subjects } : {}),
+    ...(publisher !== undefined ? { publisher } : {}),
+    ...(optString(metadata.language) !== undefined
+      ? { language: optString(metadata.language) as string }
+      : {}),
+    children,
+  };
 }
 
 export function normalizeCatalogue(doc: unknown): Catalogue {

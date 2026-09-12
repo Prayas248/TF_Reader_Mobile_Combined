@@ -1,11 +1,14 @@
-// Journal hierarchy drill-down: Journal → Volumes → Issues → Articles.
+// Journal Details (screen 02) — the top of the journal drill-down:
+// Journal Details → Volumes & Issues → Issue Articles → Article Details.
 //
-// LOOKS LIKE ITEMDETAILSCREEN. Cover + title at the top (same dimensions,
-// same placeholder icon), then a "Table of Contents" section with the
-// accordion below. This reuses the established detail-page visual language
-// without modifying ItemDetailScreen itself — the 404 from
-// GET /publications/{journalWorkId} confirmed journals are not publications
-// and cannot go through that screen's own fetch.
+// MATCHES ITEMDETAILSCREEN'S BOOK LAYOUT, ON EXPLICIT INSTRUCTION: the same
+// cover size, the same "cover is centred, nothing else is" rule, the same
+// title treatment — a journal is a peer of a book on this app's shelves, and
+// the two detail pages should read as the same product. (An earlier pass
+// shrank the cover and put it beside the title instead, to fight empty
+// space; that traded consistency for density, and consistency was what this
+// change asked for back — the "Published in"/Volumes & Issues content below
+// is what now fills the space a book detail page fills with a description.)
 //
 // THE APP BAR OWNS THE TITLE. RootNavigator sets it from route.params.title.
 //
@@ -15,22 +18,37 @@
 // immediately, same behaviour as ItemDetailScreen which gets coverUrl from
 // the publication it fetched for the previous screen.
 //
-// LAZY FETCHING PER LEVEL. Mount fetches the journal's own feed (volumes or
-// flat articles). Each volume fetches its issues on first expand; each issue
-// fetches its articles on first expand.
+// ONE FETCH ONLY. Mount fetches the journal's own root feed. If it is
+// `kind: 'publications'` (a journal with no volume level — its articles sit
+// at the root), the article list renders directly on THIS screen. If it is
+// `kind: 'navigation'` (has volumes), this screen shows a "Browse this
+// journal" card and pushes the volumes list — already in hand from this one
+// fetch — to JournalVolumesScreen, which makes no duplicate root fetch.
 //
-// ARTICLES NAVIGATE TO ITEM DETAIL. Tapping an article goes to ItemDetail —
-// the detail screen owns access-tier resolution, download state and the
-// Read/Download action bar.
+// EVERY OPTIONAL SECTION IS OMITTED, NOT SHOWN EMPTY. wokay's work-feed
+// contract does not promise description/subjects/publisher (see WorkFeed's
+// own comment in model/types.ts). Unlike ItemDetailScreen's book "About this
+// title" (a structural section that always renders, with an honest "not
+// available yet" fallback — that section owns a specific field the mockup
+// always draws a box for), a journal with no description simply has no About
+// section at all: there is no equivalent always-drawn box in the reference
+// design, so a fallback line here would be manufactured copy with nothing to
+// anchor it. Same reasoning for Subjects/publisher.
+//
+// NO JOURNAL-LEVEL ACCESS BADGE. `AccessTierBadge` renders an `AccessTier`
+// resolved from a Publication's `acquisition.licenceModel` — a `WorkFeed` has
+// no acquisition of its own (access is decided per ARTICLE, at whatever tier
+// each one's own acquisition link carries), so there is no tier to badge here
+// without inventing one.
+//
+// NO "LATEST ISSUE" SHORTCUT. Resolving the true latest issue means fetching
+// one level past this screen's own root fetch (the latest volume's own
+// issues) — an eager fetch this app deliberately avoids for a preview (see
+// JournalVolumesScreen's own header). A button that only ever opens the
+// generic volume list would be a "Latest issue" label on ordinary navigation,
+// which is worse than not offering the shortcut at all.
 import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type {
   NativeStackNavigationProp,
@@ -41,43 +59,23 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { ErrorState } from '@components/ErrorState';
 import { EmptyState } from '@components/EmptyState';
+import { Skeleton } from '@components/Skeleton';
 import { SectionHeader } from '@components/SectionHeader';
-import { AccessTierBadge } from '@components/AccessTierBadge';
+import { DescriptionSection } from '@components/DescriptionSection';
 import { useCurrentSession } from '@access/currentSession';
-import { isNotEntitled, resolveAccess } from '@access/resolveAccess';
 import { useLibraryStore } from '@store/libraryStore';
 import { getCatalogueSource } from '../config/catalogue';
-import type { Hold, Loan, NavLink, Publication, Session, WorkFeed } from '../model/types';
+import type { WorkFeed } from '../model/types';
 import type { CatalogueStackParamList } from '../navigation/types';
 import { color, elevation, radius, space, type as typeScale } from '../theme/tokens';
+import { ArticleList } from './journal/ArticleList';
 
 type Nav = NativeStackNavigationProp<CatalogueStackParamList, 'Journal'>;
 type Props = NativeStackScreenProps<CatalogueStackParamList, 'Journal'>;
 
-// Same dimensions as ItemDetailScreen — cover sits ON the page the same way.
+// Same dimensions as ItemDetailScreen's book jacket — see the file header.
 const COVER_WIDTH = space.xl * 6;
 const COVER_HEIGHT = space.xl * 9;
-
-// ── state shapes ──────────────────────────────────────────────────────────────
-
-type IssueRow = {
-  link: NavLink;
-  expanded: boolean;
-  articles: Publication[] | null;
-  loading: boolean;
-  error: boolean;
-};
-
-type VolumeRow = {
-  link: NavLink;
-  expanded: boolean;
-  issues: IssueRow[] | null;
-  directArticles: Publication[] | null;
-  loading: boolean;
-  error: boolean;
-};
-
-// ── component ─────────────────────────────────────────────────────────────────
 
 export default function JournalScreen({ route }: Props) {
   const { workId, title, institutionId, coverUrl } = route.params;
@@ -94,46 +92,29 @@ export default function JournalScreen({ route }: Props) {
   const [resolvedCoverUrl, setResolvedCoverUrl] = useState<string | undefined>(coverUrl);
   const showPlaceholder = resolvedCoverUrl === undefined || coverFailed;
 
-  const [topLoading, setTopLoading] = useState(true);
-  const [topError, setTopError] = useState(false);
-  const [flatArticles, setFlatArticles] = useState<Publication[] | null>(null);
-  const [volumes, setVolumes] = useState<VolumeRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [feed, setFeed] = useState<WorkFeed | null>(null);
 
   // No synchronous setState here — only inside the async continuations. A
   // setState reachable directly from an effect body triggers a lint error
-  // ("cascading renders"); topLoading/topError are already at these values on
+  // ("cascading renders"); loading/failed are already at these values on
   // mount. Retry is the one path that resets them, and it runs from a press
   // handler — see `retry` below.
   const fetchRoot = useCallback(() => {
     getCatalogueSource()
       .getWork(institutionId, workId)
-      .then((feed: WorkFeed) => {
-        // Update cover from feed metadata if available and not already set.
-        if (feed.coverUrl !== undefined) {
-          setResolvedCoverUrl(feed.coverUrl);
-        }
-        if (feed.kind === 'publications') {
-          setFlatArticles(feed.articles);
-        } else {
-          setVolumes(
-            feed.children.map((link) => ({
-              link,
-              expanded: false,
-              issues: null,
-              directArticles: null,
-              loading: false,
-              error: false,
-            })),
-          );
-        }
+      .then((result: WorkFeed) => {
+        if (result.coverUrl !== undefined) setResolvedCoverUrl(result.coverUrl);
+        setFeed(result);
       })
-      .catch(() => setTopError(true))
-      .finally(() => setTopLoading(false));
+      .catch(() => setFailed(true))
+      .finally(() => setLoading(false));
   }, [institutionId, workId]);
 
   const retry = useCallback(() => {
-    setTopLoading(true);
-    setTopError(false);
+    setLoading(true);
+    setFailed(false);
     fetchRoot();
   }, [fetchRoot]);
 
@@ -141,134 +122,28 @@ export default function JournalScreen({ route }: Props) {
     fetchRoot();
   }, [fetchRoot]);
 
-  const toggleVolume = useCallback(
-    (vIdx: number) => {
-      setVolumes((prev) => {
-        const v = prev[vIdx];
-        if (v === undefined) return prev;
-
-        const toggled = prev.map((row, i) =>
-          i !== vIdx ? row : { ...row, expanded: !row.expanded },
-        );
-
-        if (!v.expanded && v.issues === null && !v.loading) {
-          const volumeWorkId = v.link.workId;
-          if (volumeWorkId !== undefined) {
-            const loading = toggled.map((row, i) =>
-              i !== vIdx ? row : { ...row, loading: true },
-            );
-            getCatalogueSource()
-              .getWork(institutionId, volumeWorkId)
-              .then((feed: WorkFeed) => {
-                setVolumes((cur) =>
-                  cur.map((row, i) => {
-                    if (i !== vIdx) return row;
-                    if (feed.kind === 'publications') {
-                      return { ...row, loading: false, issues: [], directArticles: feed.articles };
-                    }
-                    return {
-                      ...row,
-                      loading: false,
-                      issues: feed.children.map((link) => ({
-                        link,
-                        expanded: false,
-                        articles: null,
-                        loading: false,
-                        error: false,
-                      })),
-                      directArticles: null,
-                    };
-                  }),
-                );
-              })
-              .catch(() => {
-                setVolumes((cur) =>
-                  cur.map((row, i) =>
-                    i !== vIdx ? row : { ...row, loading: false, error: true },
-                  ),
-                );
-              });
-            return loading;
-          }
-        }
-        return toggled;
-      });
-    },
-    [institutionId],
+  const goToArticle = useCallback(
+    (id: string) =>
+      navigation.navigate('ItemDetail', {
+        itemId: id,
+        workType: 'article',
+        articleContext: { journalTitle: title },
+      }),
+    [navigation, title],
   );
 
-  const toggleIssue = useCallback(
-    (vIdx: number, iIdx: number) => {
-      setVolumes((prev) => {
-        const v = prev[vIdx];
-        if (v === undefined || v.issues === null) return prev;
-        const iss = v.issues[iIdx];
-        if (iss === undefined) return prev;
+  const goToVolumes = useCallback(() => {
+    if (feed === null || feed.kind !== 'navigation') return;
+    navigation.navigate('JournalVolumes', {
+      journalTitle: title,
+      institutionId,
+      volumes: feed.children,
+    });
+  }, [navigation, feed, title, institutionId]);
 
-        const toggledIssues = v.issues.map((row, i) =>
-          i !== iIdx ? row : { ...row, expanded: !row.expanded },
-        );
-        const toggled = prev.map((row, i) =>
-          i !== vIdx ? row : { ...row, issues: toggledIssues },
-        );
-
-        if (!iss.expanded && iss.articles === null && !iss.loading) {
-          const issueWorkId = iss.link.workId;
-          if (issueWorkId !== undefined) {
-            const loadingIssues = toggledIssues.map((row, i) =>
-              i !== iIdx ? row : { ...row, loading: true },
-            );
-            const loading = prev.map((row, i) =>
-              i !== vIdx ? row : { ...row, issues: loadingIssues },
-            );
-            getCatalogueSource()
-              .getWork(institutionId, issueWorkId)
-              .then((feed: WorkFeed) => {
-                setVolumes((cur) =>
-                  cur.map((vRow, vi) => {
-                    if (vi !== vIdx || vRow.issues === null) return vRow;
-                    return {
-                      ...vRow,
-                      issues: vRow.issues.map((iRow, ii) => {
-                        if (ii !== iIdx) return iRow;
-                        return {
-                          ...iRow,
-                          loading: false,
-                          articles: feed.kind === 'publications' ? feed.articles : [],
-                        };
-                      }),
-                    };
-                  }),
-                );
-              })
-              .catch(() => {
-                setVolumes((cur) =>
-                  cur.map((vRow, vi) => {
-                    if (vi !== vIdx || vRow.issues === null) return vRow;
-                    return {
-                      ...vRow,
-                      issues: vRow.issues.map((iRow, ii) =>
-                        ii !== iIdx ? iRow : { ...iRow, loading: false, error: true },
-                      ),
-                    };
-                  }),
-                );
-              });
-            return loading;
-          }
-        }
-        return toggled;
-      });
-    },
-    [institutionId],
-  );
-
-  const goToDetail = useCallback(
-    (id: string) => navigation.navigate('ItemDetail', { itemId: id }),
-    [navigation],
-  );
-
-  // ── cover header — same shape as ItemDetailScreen ─────────────────────────
+  const onShare = useCallback(() => {
+    void Share.share({ message: title });
+  }, [title]);
 
   const coverHeader = (
     <View style={styles.coverWrap}>
@@ -276,9 +151,10 @@ export default function JournalScreen({ route }: Props) {
         <View style={[styles.cover, styles.coverPlaceholder]}>
           <MaterialCommunityIcons
             name="book-open-page-variant-outline"
-            size={COVER_WIDTH / 2}
-            color={color.textSecondary}
+            size={COVER_WIDTH * 0.4}
+            color={color.primary}
           />
+          <Text style={styles.coverPlaceholderLabel}>JOURNAL</Text>
         </View>
       ) : (
         <Image
@@ -294,281 +170,134 @@ export default function JournalScreen({ route }: Props) {
     </View>
   );
 
-  // ── render ────────────────────────────────────────────────────────────────
-
-  if (topError) {
+  if (failed) {
     return (
       <View style={styles.screen}>
         {coverHeader}
         <View style={styles.center}>
-          <ErrorState
-            variant="not_ready"
-            message="Couldn't load this journal."
-            onRetry={retry}
-          />
+          <ErrorState variant="not_ready" message="Couldn't load this journal." onRetry={retry} />
         </View>
       </View>
     );
   }
 
-  const tocContent = topLoading ? (
-    <View style={styles.center}>
-      <ActivityIndicator size="large" color={color.textSecondary} />
-    </View>
-  ) : flatArticles !== null ? (
-    flatArticles.length === 0 ? (
-      <View style={styles.center}>
-        <EmptyState variant="no_content" />
+  if (loading || feed === null) {
+    return (
+      <View style={styles.screen}>
+        <View style={styles.loading}>
+          <Skeleton variant="block" width={COVER_WIDTH} height={COVER_HEIGHT} />
+          <Skeleton variant="text" width={COVER_WIDTH * 2} height={typeScale.pageTitle.lineHeight} />
+          <Skeleton variant="text" width={COVER_WIDTH} height={typeScale.body.lineHeight} />
+        </View>
       </View>
-    ) : (
-      <ArticleList
-        articles={flatArticles}
-        onPress={goToDetail}
-        institutionId={institutionId}
-        session={session}
-        loans={loans}
-        holds={holds}
-      />
-    )
-  ) : volumes.length === 0 ? (
-    <View style={styles.center}>
-      <EmptyState variant="no_content" />
-    </View>
-  ) : (
-    <>
-      {volumes.map((volume, vIdx) => (
-        <VolumeSection
-          key={volume.link.workId ?? volume.link.href}
-          volume={volume}
-          onToggle={() => toggleVolume(vIdx)}
-          onToggleIssue={(iIdx) => toggleIssue(vIdx, iIdx)}
-          onPressArticle={goToDetail}
-          institutionId={institutionId}
-          session={session}
-          loans={loans}
-          holds={holds}
-        />
-      ))}
-    </>
-  );
+    );
+  }
+
+  const hasSubjects = feed.kind === 'navigation' && feed.subjects !== undefined && feed.subjects.length > 0;
+  const hasAbout = feed.kind === 'navigation' && feed.description !== undefined;
+  const hasMetaSection = (feed.kind === 'navigation' && feed.publisher !== undefined) || hasSubjects || hasAbout;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       {coverHeader}
-      <Text style={styles.journalTitle}>{title}</Text>
-      <SectionHeader title="Table of Contents" emphasis="editorial" />
-      {tocContent}
+
+      {/* Title/type on the left, Share as a small icon button on the right —
+          under the cover, beside the name, not paired with Volumes & Issues
+          at the bottom any more. */}
+      <View style={styles.titleRow}>
+        <View style={styles.titleColumn}>
+          <Text style={styles.journalTitle}>{title}</Text>
+          <Text style={styles.journalType}>Journal</Text>
+        </View>
+        <Pressable
+          style={styles.shareIconButton}
+          onPress={onShare}
+          accessibilityRole="button"
+          accessibilityLabel="Share"
+        >
+          <Ionicons name="share-outline" size={18} color={color.primary} />
+        </Pressable>
+      </View>
+
+      {feed.kind === 'navigation' && feed.publisher !== undefined && (
+        <Text style={styles.publisherLine} numberOfLines={2}>
+          Published by <Text style={styles.publisherName}>{feed.publisher}</Text>
+        </Text>
+      )}
+
+      {hasMetaSection && <View style={styles.rule} />}
+
+      {hasSubjects && feed.kind === 'navigation' && feed.subjects !== undefined && (
+        <View style={styles.subjectsRow}>
+          {feed.subjects.map((subject) => (
+            <View key={subject} style={styles.subjectChip}>
+              <Text style={styles.subjectChipLabel} numberOfLines={1}>
+                {subject}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {hasAbout && feed.kind === 'navigation' && (
+        <DescriptionSection title="About this journal" description={feed.description} />
+      )}
+
+      {feed.kind === 'publications' ? (
+        <>
+          <View style={styles.rule} />
+          <SectionHeader title="Articles" emphasis="editorial" />
+          {feed.articles.length === 0 ? (
+            <View style={styles.center}>
+              <EmptyState variant="no_content" />
+            </View>
+          ) : (
+            <ArticleList
+              articles={feed.articles}
+              onPress={goToArticle}
+              institutionId={institutionId}
+              session={session}
+              loans={loans}
+              holds={holds}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <View style={styles.rule} />
+
+          {/* The one count this screen actually knows without an extra
+              fetch — feed.children is the journal's own root feed, already
+              in hand. Issues/articles totals are deliberately NOT shown here:
+              those live inside volumes this screen has not fetched, and
+              eager-fetching every one of them just to total a preview line
+              is exactly what this app avoids elsewhere in the journal flow
+              (see JournalVolumesScreen's own header). */}
+          <View style={styles.statPill}>
+            <Ionicons name="albums-outline" size={typeScale.smallLabel.size} color={color.primary} />
+            <Text style={styles.statPillLabel}>
+              {feed.children.length} {feed.children.length === 1 ? 'volume' : 'volumes'}
+            </Text>
+          </View>
+
+          {/* A real button, not a list row — this is the one action this
+              page exists to lead to, the same weight a book's own ActionBar
+              gives Read. Full width: Share moved up beside the title, so
+              this no longer shares the row with a second action. */}
+          <Pressable
+            style={[styles.actionButton, styles.actionButtonFilled]}
+            onPress={goToVolumes}
+            accessibilityRole="button"
+            accessibilityLabel="Volumes and issues, browse the complete journal archive"
+          >
+            <Ionicons name="albums-outline" size={18} color={color.white} />
+            <Text style={styles.actionButtonFilledLabel}>Volumes & Issues</Text>
+          </Pressable>
+        </>
+      )}
     </ScrollView>
   );
 }
-
-// ── sub-components ────────────────────────────────────────────────────────────
-
-function VolumeSection({
-  volume,
-  onToggle,
-  onToggleIssue,
-  onPressArticle,
-  institutionId,
-  session,
-  loans,
-  holds,
-}: {
-  volume: VolumeRow;
-  onToggle: () => void;
-  onToggleIssue: (iIdx: number) => void;
-  onPressArticle: (id: string) => void;
-  institutionId: string;
-  session: Session | null;
-  loans: Loan[];
-  holds: Hold[];
-}) {
-  return (
-    <View style={styles.volumeContainer}>
-      <Pressable
-        style={styles.accordionRow}
-        onPress={onToggle}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: volume.expanded }}
-        accessibilityLabel={volume.link.title}
-      >
-        <Ionicons
-          name={volume.expanded ? 'chevron-down' : 'chevron-forward'}
-          size={16}
-          color={color.textSecondary}
-        />
-        <Text style={styles.accordionLabel} numberOfLines={2}>
-          {volume.link.title}
-        </Text>
-        {volume.loading && (
-          <ActivityIndicator size="small" color={color.textSecondary} />
-        )}
-      </Pressable>
-
-      {volume.expanded && !volume.loading && (
-        <View style={styles.accordionBody}>
-          {volume.error && (
-            <Text style={styles.inlineError}>{"Couldn't load issues."}</Text>
-          )}
-          {volume.directArticles !== null && volume.directArticles.length > 0 && (
-            <ArticleList
-              articles={volume.directArticles}
-              onPress={onPressArticle}
-              indent
-              institutionId={institutionId}
-              session={session}
-              loans={loans}
-              holds={holds}
-            />
-          )}
-          {volume.issues !== null &&
-            volume.issues.map((issue, iIdx) => (
-              <IssueSection
-                key={issue.link.workId ?? issue.link.href}
-                issue={issue}
-                onToggle={() => onToggleIssue(iIdx)}
-                onPressArticle={onPressArticle}
-                institutionId={institutionId}
-                session={session}
-                loans={loans}
-                holds={holds}
-              />
-            ))}
-          {volume.issues !== null &&
-            volume.issues.length === 0 &&
-            volume.directArticles === null && (
-              <Text style={styles.emptyHint}>No issues found.</Text>
-            )}
-        </View>
-      )}
-    </View>
-  );
-}
-
-function IssueSection({
-  issue,
-  onToggle,
-  onPressArticle,
-  institutionId,
-  session,
-  loans,
-  holds,
-}: {
-  issue: IssueRow;
-  onToggle: () => void;
-  onPressArticle: (id: string) => void;
-  institutionId: string;
-  session: Session | null;
-  loans: Loan[];
-  holds: Hold[];
-}) {
-  return (
-    <View>
-      <Pressable
-        style={[styles.accordionRow, styles.issueRow]}
-        onPress={onToggle}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: issue.expanded }}
-        accessibilityLabel={issue.link.title}
-      >
-        <Ionicons
-          name={issue.expanded ? 'chevron-down' : 'chevron-forward'}
-          size={14}
-          color={color.textSecondary}
-        />
-        <Text style={styles.issueLabel} numberOfLines={2}>
-          {issue.link.title}
-        </Text>
-        {issue.loading && (
-          <ActivityIndicator size="small" color={color.textSecondary} />
-        )}
-      </Pressable>
-
-      {issue.expanded && !issue.loading && (
-        <View style={styles.accordionBody}>
-          {issue.error && (
-            <Text style={styles.inlineError}>{"Couldn't load articles."}</Text>
-          )}
-          {issue.articles !== null && issue.articles.length === 0 && (
-            <Text style={styles.emptyHint}>No articles found.</Text>
-          )}
-          {issue.articles !== null && issue.articles.length > 0 && (
-            <ArticleList
-              articles={issue.articles}
-              onPress={onPressArticle}
-              indent
-              institutionId={institutionId}
-              session={session}
-              loans={loans}
-              holds={holds}
-            />
-          )}
-        </View>
-      )}
-    </View>
-  );
-}
-
-function ArticleList({
-  articles,
-  onPress,
-  indent = false,
-  institutionId,
-  session,
-  loans,
-  holds,
-}: {
-  articles: Publication[];
-  onPress: (id: string) => void;
-  indent?: boolean;
-  institutionId: string;
-  session: Session | null;
-  loans: Loan[];
-  holds: Hold[];
-}) {
-  return (
-    <View style={[styles.articleList, indent && styles.articleListIndent]}>
-      {articles.map((article) => {
-        const loan = loans.find((l) => l.itemId === article.id);
-        const hold = holds.find((h) => h.itemId === article.id);
-        const access = resolveAccess({ item: article, institutionId, session, loan, hold });
-        const badge = isNotEntitled(access) ? undefined : (
-          <AccessTierBadge tier={access.tier} size="sm" />
-        );
-        return (
-          <Pressable
-            key={article.id}
-            style={styles.articleRow}
-            onPress={() => onPress(article.id)}
-            accessibilityRole="button"
-            accessibilityLabel={article.title}
-          >
-            <View style={styles.articleBody}>
-              <Text style={styles.articleTitle} numberOfLines={3}>
-                {article.title}
-              </Text>
-              {article.authors.length > 0 && (
-                <Text style={styles.articleMeta} numberOfLines={1}>
-                  {article.authors.join(', ')}
-                </Text>
-              )}
-              <View style={styles.articleFooter}>
-                {badge !== undefined && (
-                  <View style={styles.articleBadge}>{badge}</View>
-                )}
-                <View style={styles.readButton} accessibilityElementsHidden>
-                  <Text style={styles.readButtonText}>Read</Text>
-                </View>
-              </View>
-            </View>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-// ── styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   screen: {
@@ -578,14 +307,22 @@ const styles = StyleSheet.create({
   content: {
     padding: space.lg,
     paddingBottom: space.xl,
-    gap: space.sm,
+    gap: space.md,
   },
   center: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: space.lg,
   },
-  // ── cover — mirrors ItemDetailScreen exactly ─────────────────────────────
+  loading: {
+    alignItems: 'center',
+    padding: space.lg,
+    gap: space.md,
+  },
+  // THE COVER IS CENTRED; NOTHING ELSE IS — same rule, same wording, as
+  // ItemDetailScreen's own `coverWrap` comment. Everything below it (title,
+  // type, publisher, subjects, About, the action row) is left-ranged off the
+  // page's own margin, matching the book layout exactly.
   coverWrap: {
     alignItems: 'center',
     marginBottom: space.lg,
@@ -598,115 +335,129 @@ const styles = StyleSheet.create({
     ...elevation.card.ios,
     ...elevation.card.android,
   },
+  // A journal-specific placeholder, not a generic broken-image icon: a tinted
+  // surface, an outline and the word JOURNAL underneath the glyph, so an
+  // absent cover still reads as "this is a journal" rather than "this image
+  // failed to load".
   coverPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
+    gap: space.xs,
+    backgroundColor: color.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.border,
   },
-  // Matches ItemDetailScreen's title exactly: Aleo, pageTitle size, tight tracking.
+  coverPlaceholderLabel: {
+    fontFamily: typeScale.smallLabel.fontFamily,
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 1,
+    fontWeight: '700',
+    color: color.primary,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+  },
+  titleColumn: {
+    flex: 1,
+    gap: space.xs,
+  },
   journalTitle: {
     fontFamily: typeScale.cardTitle.fontFamily,
     fontSize: typeScale.pageTitle.size,
     lineHeight: typeScale.pageTitle.lineHeight,
     letterSpacing: -0.3,
     color: color.textPrimary,
-    textAlign: 'center',
-    marginBottom: space.xs,
   },
-  // ── accordion ─────────────────────────────────────────────────────────────
-  volumeContainer: {
-    borderRadius: radius.card,
-    overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
+  journalType: {
+    ...typeScale.meta,
+    color: color.textSecondary,
+  },
+  // A small, secondary icon button — Share is not this page's main action,
+  // so it takes none of the visual weight the Volumes & Issues button below
+  // gets.
+  shareIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth * 2,
     borderColor: color.border,
-    backgroundColor: color.white,
   },
-  accordionRow: {
+  // A pill, not plain text — same "real stat, brand-blessed Aleo Light
+  // treatment" shape HeroBanner's own `statLabel` uses for "Over 140,000
+  // peer-reviewed titles" (tokens.ts's `keyStat` is the guide's own named
+  // example for exactly this). `surface`/`primary` here rather than
+  // HeroBanner's `subscriptionTint`/`navy` — this pill sits on a plain white
+  // page, not a navy gradient, so it takes this file's own tint pairing
+  // instead of copying colours chosen for a different background.
+  statPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.sm,
+    alignSelf: 'flex-start',
+    gap: space.xs,
     paddingHorizontal: space.md,
-    paddingVertical: space.sm + 2,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
     backgroundColor: color.surface,
   },
-  issueRow: {
-    backgroundColor: color.white,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.border,
-    paddingLeft: space.lg + space.sm,
+  statPillLabel: {
+    fontFamily: typeScale.keyStat.fontFamily,
+    fontSize: typeScale.keyStat.size,
+    lineHeight: typeScale.keyStat.lineHeight,
+    color: color.primary,
   },
-  accordionLabel: {
-    flex: 1,
-    fontFamily: typeScale.body.fontFamily,
-    fontSize: typeScale.body.size,
-    lineHeight: typeScale.body.lineHeight,
-    fontWeight: '700',
-    color: color.textPrimary,
-  },
-  issueLabel: {
-    flex: 1,
-    ...typeScale.body,
-    color: color.textPrimary,
-  },
-  accordionBody: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.border,
-  },
-  // ── articles ──────────────────────────────────────────────────────────────
-  articleList: {
-    gap: 0,
-  },
-  articleListIndent: {
-    paddingLeft: space.md,
-  },
-  articleRow: {
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm + 2,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: color.border,
-  },
-  articleBody: {
-    gap: space.xs,
-  },
-  articleFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
+  publisherLine: {
+    ...typeScale.cardMeta,
+    color: color.textSecondary,
     marginTop: space.xs,
   },
-  articleBadge: {
-    flex: 1,
-  },
-  articleTitle: {
-    fontFamily: typeScale.body.fontFamily,
-    fontSize: typeScale.body.size,
-    lineHeight: typeScale.body.lineHeight,
+  publisherName: {
     color: color.textPrimary,
   },
-  articleMeta: {
-    ...typeScale.meta,
-    color: color.textSecondary,
+  rule: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: color.border,
   },
-  readButton: {
-    paddingHorizontal: space.sm,
+  subjectsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.sm,
+  },
+  subjectChip: {
+    alignSelf: 'flex-start',
     paddingVertical: space.xs,
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderColor: color.primary,
+  },
+  subjectChipLabel: {
+    fontFamily: typeScale.smallLabel.fontFamily,
+    fontSize: typeScale.smallLabel.size,
+    lineHeight: typeScale.smallLabel.lineHeight,
+    color: color.primary,
+  },
+  // Full width (the `content` container's default `alignItems: 'stretch'`
+  // does this without an explicit width) — the one action this page exists
+  // to lead to, so it gets the same prominence a book's Read button gets.
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xs,
+    paddingVertical: space.sm + 2,
     borderRadius: radius.card,
+  },
+  actionButtonFilled: {
     backgroundColor: color.primary,
   },
-  readButtonText: {
-    ...typeScale.smallLabel,
+  actionButtonFilledLabel: {
+    ...typeScale.button,
     color: color.white,
     fontWeight: '700',
-  },
-  inlineError: {
-    ...typeScale.meta,
-    color: color.textSecondary,
-    padding: space.sm,
-    textAlign: 'center',
-  },
-  emptyHint: {
-    ...typeScale.meta,
-    color: color.textSecondary,
-    padding: space.sm,
-    paddingLeft: space.lg,
   },
 });
