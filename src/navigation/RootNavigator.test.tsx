@@ -318,9 +318,12 @@ describe('RootNavigator — institution pill', () => {
     });
 
     // InstitutionListScreen itself is stubbed to null (see the mocks above) —
-    // the pushed screen's own header title is what confirms the navigation,
-    // and the pill itself disappears (this route pushes, so `back` is now set).
-    expect(screen.getByText('Change institution')).toBeTruthy();
+    // the header naming where "back" returns to is what confirms the
+    // navigation (`pushedScreenHeaderTitle`'s own comment in
+    // RootNavigator.tsx), so it shows CatalogueHome's own title rather than
+    // InstitutionList's registered 'Change institution' fallback. The pill
+    // itself disappears either way (this route pushes, so `back` is now set).
+    expect(screen.getByText('Taylor & Francis')).toBeTruthy();
     expect(screen.queryByText('Imperial College London')).toBeNull();
   });
 });

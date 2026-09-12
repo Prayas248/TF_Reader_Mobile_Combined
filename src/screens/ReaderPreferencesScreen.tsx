@@ -241,7 +241,7 @@ const styles = StyleSheet.create({
   // reading as separate items rather than one continuous list.
   content: {
     padding: space.md,
-    paddingBottom: space.lg,
+    paddingBottom: space.xl,
     gap: space.lg,
   },
   skeletonSection: {
@@ -285,6 +285,12 @@ const styles = StyleSheet.create({
   },
   pageHeader: {
     gap: space.xs,
+    // Matches ProfileScreen's own `pageHeader` — without this, the gap under
+    // the title (just the `content` gap, 24) read as tighter than Profile's
+    // header-to-first-section gap (32, from this padding stacking with the
+    // section below it), even though both screens use the same `lg` gap
+    // between their own sections.
+    paddingBottom: space.sm,
   },
   pageHeaderStandalone: {
     paddingHorizontal: space.md,

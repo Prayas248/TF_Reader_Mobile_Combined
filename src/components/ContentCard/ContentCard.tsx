@@ -23,8 +23,18 @@
 //
 // It sets no outer width, margin or position (CONVENTIONS §8) — the list that
 // lays the rows out owns that.
-import { useState, type ReactNode } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  AccessibilityInfo,
+  Animated,
+  Easing,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type TextStyle,
+} from 'react-native';
 import { Image } from 'expo-image';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
@@ -96,35 +106,38 @@ export interface ContentCardProps {
   progress?: number;
   state?: ContentCardState;
   variant?: ContentCardVariant;
+  /**
+   * Whether this card currently sits within its list's visible viewport —
+   * cover variant only, ignored by `row` (see `MarqueeTitle`'s own header
+   * comment for why only the cover tile needs this at all). Gates the title
+   * marquee's start delay: a card the caller marks not-visible cancels any
+   * pending or in-progress scroll immediately, and a freshly-visible one
+   * waits out the delay again from zero. Defaults to `true`, so a caller
+   * that never scrolls its cover tiles out of view (this file's own tests,
+   * the dev Gallery) still gets the plain delay-then-scroll behaviour
+   * without tracking anything.
+   */
+  visible?: boolean;
   // Absent means the row is not a navigation target, so it is not announced as a
   // button and no chevron is drawn.
   onPress?: () => void;
 }
 
-// The meta row: publisher, format chip, access badge, whichever are present.
-// A function rather than a component folder of its own — it has no
+// The meta row: publisher and the format chip, whichever are present. A
+// function rather than a component folder of its own — it has no
 // independent identity outside this file, the same reasoning CONVENTIONS §1
 // gives for a part used by only one caller.
 //
-// `spread` is the cover tile's own shape: publisher on the left, badge
-// pinned to the right (`justifyContent: 'space-between'`), with the format
-// chip omitted here entirely — a narrow carousel tile has room for two of
-// these three (see `coverFormatBadge`, which draws it over the cover image
-// instead). The row variant has a full text column to work with, so it
-// keeps all three side by side, left-aligned, no spread.
-function MetaRow({
-  publisher,
-  format,
-  badge,
-  spread = false,
-}: {
-  publisher?: string;
-  format?: string;
-  badge?: ReactNode;
-  spread?: boolean;
-}) {
+// THE ACCESS BADGE DOES NOT LIVE HERE — on explicit instruction, it moved to
+// the foot of the card in both variants (the row's `bottomRow`, the cover
+// tile's own `badgeSlot`), so a reader scans title/author first and finds
+// the access status as a closing line rather than a distraction beside the
+// publisher. This row used to also take a `spread` prop purely to push that
+// badge to its right edge on the cover tile; with the badge gone, `spread`
+// had nothing left to spread against, so it went with it.
+function MetaRow({ publisher, format }: { publisher?: string; format?: string }) {
   return (
-    <View style={[styles.metaRow, spread && styles.metaRowSpread]}>
+    <View style={styles.metaRow}>
       {publisher !== undefined && (
         <Text
           testID="content-card-publisher"
@@ -147,7 +160,104 @@ function MetaRow({
           </Text>
         </View>
       )}
-      {badge !== undefined && <View testID="content-card-badge">{badge}</View>}
+    </View>
+  );
+}
+
+// The cover tile's title is one line now (see `TITLE_LINE_HEIGHT`'s own
+// note), so a long title has nowhere to wrap — this scrolls it into view
+// instead of just cutting it off. Only the cover tile's title uses this: the
+// row variant still wraps to two lines (its `text` column is not a fixed
+// width the way a carousel tile is), so it never needs to.
+//
+// MEASUREMENT: the visible `Text` carries no `numberOfLines`/width of its
+// own, so it lays out at its full natural width regardless of the tile —
+// `onLayout` on it reports that true width, and the wrapping `marqueeClip`
+// (which DOES take the tile's width) clips anything past it. This needs no
+// second, hidden measuring node.
+//
+// TIMING: `active` (this card's own on-screen visibility, set by
+// CatalogueScreen from its carousel's scroll position) gates a
+// `MARQUEE_START_DELAY_MS` timer before the scroll starts — cleared by this
+// effect's own cleanup the instant `active` goes false, so a tile only
+// glimpsed mid-swipe never starts scrolling, and one already scrolling stops
+// and resets the moment it scrolls out of view (see the return early below).
+// A caller that never tracks visibility (this file's own tests, the dev
+// Gallery) can simply not pass `active`; it defaults to `true` on
+// `ContentCard`'s own `visible` prop, so the delay still applies, it is just
+// never cancelled by visibility.
+function MarqueeTitle({ text, style, active }: { text: string; style: TextStyle; active: boolean }) {
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [textWidth, setTextWidth] = useState(0);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [translateX] = useState(() => new Animated.Value(0));
+  const loopRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (!cancelled) setReduceMotion(enabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const overflow = textWidth - containerWidth;
+  const needsMarquee = !reduceMotion && containerWidth > 0 && overflow > 0;
+
+  useEffect(() => {
+    if (!active || !needsMarquee) {
+      loopRef.current?.stop();
+      translateX.setValue(0);
+      return;
+    }
+
+    const startTimer = setTimeout(() => {
+      const legDuration = (overflow / MARQUEE_PX_PER_SEC) * 1000;
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(translateX, {
+            toValue: -overflow,
+            duration: legDuration,
+            easing: Easing.linear,
+            useNativeDriver: true,
+          }),
+          Animated.delay(MARQUEE_END_PAUSE_MS),
+          Animated.timing(translateX, {
+            toValue: 0,
+            duration: legDuration,
+            easing: Easing.linear,
+            useNativeDriver: true,
+          }),
+          Animated.delay(MARQUEE_END_PAUSE_MS),
+        ]),
+      );
+      loopRef.current = loop;
+      loop.start();
+    }, MARQUEE_START_DELAY_MS);
+
+    return () => {
+      clearTimeout(startTimer);
+      loopRef.current?.stop();
+      translateX.setValue(0);
+    };
+  }, [active, needsMarquee, overflow, translateX]);
+
+  return (
+    <View style={styles.marqueeClip} onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width)}>
+      <Animated.Text
+        testID="content-card-title"
+        style={[
+          style,
+          styles.marqueeText,
+          needsMarquee && { transform: [{ translateX }] },
+        ]}
+        numberOfLines={1}
+        onLayout={(e) => setTextWidth(e.nativeEvent.layout.width)}
+      >
+        {text}
+      </Animated.Text>
     </View>
   );
 }
@@ -164,6 +274,7 @@ export default function ContentCard({
   progress,
   state = 'idle',
   variant = 'row',
+  visible = true,
   onPress,
 }: ContentCardProps) {
   const loading = state === 'loading';
@@ -189,13 +300,16 @@ export default function ContentCard({
       <View testID="content-card-skeleton" style={styles.coverSkeleton}>
         <View style={styles.coverThumb} />
         <View style={styles.metaRowSlot}>
-          <View style={[styles.bar, styles.barBadge]} />
+          <View style={[styles.bar, styles.barMeta]} />
         </View>
         <View style={styles.titleSlot}>
           <View style={[styles.bar, styles.barTitle]} />
         </View>
         <View style={styles.authorSlot}>
           <View style={[styles.bar, styles.barMeta]} />
+        </View>
+        <View style={styles.badgeSlot}>
+          <View style={[styles.bar, styles.barBadge]} />
         </View>
       </View>
     ) : (
@@ -249,10 +363,11 @@ export default function ContentCard({
               onError={() => setImageFailed(true)}
             />
           )}
-          {/* Drawn over the cover art rather than in the meta row below —
-              the row only has room for publisher and badge (see MetaRow's
-              `spread`); the format chip moves here instead of competing with
-              them for the same narrow width. */}
+          {/* Drawn over the cover art rather than in the meta row below — the
+              row only has room for publisher now that the badge has moved to
+              the tile's own foot (see `badgeSlot` below); the format chip
+              moves here instead of competing with it for the same narrow
+              width. */}
           {format !== undefined && (
             <View style={styles.coverFormatBadge}>
               <Text testID="content-card-format" style={styles.coverFormatBadgeText}>
@@ -262,12 +377,10 @@ export default function ContentCard({
           )}
         </View>
         <View testID="content-card-meta-slot" style={styles.metaRowSlot}>
-          <MetaRow publisher={publisher} badge={badge} spread />
+          <MetaRow publisher={publisher} />
         </View>
         <View testID="content-card-title-slot" style={styles.titleSlot}>
-          <Text testID="content-card-title" style={styles.title} numberOfLines={2}>
-            {title}
-          </Text>
+          <MarqueeTitle text={title} style={styles.title} active={visible} />
         </View>
         <View testID="content-card-author-slot" style={styles.authorSlot}>
           {authors !== undefined && (
@@ -275,6 +388,16 @@ export default function ContentCard({
               {authors}
             </Text>
           )}
+        </View>
+        {/* The access badge's new home — on explicit instruction, moved from
+            beside the publisher (see `MetaRow`'s own note) to the tile's
+            last line, so it reads as a closing status rather than
+            competing with the publisher/title for attention up top.
+            Fixed-height, like every slot above, for the same reason: a tile
+            with no badge must not sit shorter than a neighbour that has
+            one. */}
+        <View testID="content-card-badge-slot" style={styles.badgeSlot}>
+          {badge !== undefined && <View testID="content-card-badge">{badge}</View>}
         </View>
       </>
     );
@@ -326,7 +449,7 @@ export default function ContentCard({
         </View>
 
         <View style={styles.text}>
-          <MetaRow publisher={publisher} format={format} badge={badge} />
+          <MetaRow publisher={publisher} format={format} />
           {/* NOT a fixed-height slot, deliberately — that was tried and
               reverted. Reserving two lines' worth of height for a one-line
               title left dead space inside the box, which pushed the author
@@ -347,19 +470,26 @@ export default function ContentCard({
               {authors}
             </Text>
           )}
+          <View style={styles.bottomSpacer} />
           {/* Beneath everything else rather than beside the chevron: the row
               already reads top-to-bottom (meta, title, author), and a 48pt
               button in the horizontal band would squeeze that column on a
-              phone. `meta` and `action` share the one line — pinned to
-              opposite ends — rather than each getting a row of their own;
-              either can appear without the other. */}
-          {(meta !== undefined || action !== undefined) && (
+              phone. The access badge moved down here too, on explicit
+              instruction — see `MetaRow`'s own note — so it reads as a
+              closing status line rather than competing with the publisher
+              up top. `badge`+`meta` share the row's left side (`bottomRowLeft`);
+              `action` stays pinned to the opposite end; any of the three can
+              appear without the others. */}
+          {(badge !== undefined || meta !== undefined || action !== undefined) && (
             <View style={styles.bottomRow}>
-              {meta !== undefined && (
-                <Text testID="content-card-meta" style={styles.metaLine} numberOfLines={1}>
-                  {meta}
-                </Text>
-              )}
+              <View style={styles.bottomRowLeft}>
+                {badge !== undefined && <View testID="content-card-badge">{badge}</View>}
+                {meta !== undefined && (
+                  <Text testID="content-card-meta" style={styles.metaLine} numberOfLines={1}>
+                    {meta}
+                  </Text>
+                )}
+              </View>
               {action !== undefined && (
                 <View testID="content-card-action" style={styles.action}>
                   {action}
@@ -423,17 +553,54 @@ const ICON_SIZE = space.xl;
 
 // AccessTierBadge's own rendered height at size="sm": its label line
 // (`type.smallLabel.lineHeight`) plus its vertical padding (`space.xs`, top
-// and bottom). Shared by the meta-row slot and its skeleton bar so both track
-// the same source instead of two guessed constants.
+// and bottom). Shared by `badgeSlot` and its skeleton bar so both track the
+// same source instead of two guessed constants.
 const BADGE_HEIGHT = type.smallLabel.lineHeight + space.xs * 2;
 
+// A deliberately smaller size than the shared `cardTitle` token, on explicit
+// instruction that a book's title was reading too large on this card. A
+// scoped override rather than a change to `cardTitle` itself:
+// `ElitePendingAccessCard` reads that token directly too, for an unrelated
+// card this instruction was not about, and shrinking the shared token would
+// have moved its title along with this one. `titleSlot` and `barTitle`
+// below size off this constant rather than `type.cardTitle.lineHeight`, so
+// the cover tile's reserved title space shrinks along with the text that
+// fills it.
+const TITLE_SIZE = 16;
+const TITLE_LINE_HEIGHT = 20;
+
+// `MarqueeTitle`'s own timing — how long an overflowing title sits still
+// once visible before it starts scrolling, how long it pauses at each end,
+// and how fast it moves. Not derived from the spacing scale (CONVENTIONS §5
+// governs layout values; these are durations/speeds, a different kind of
+// constant entirely, the same exception `letterSpacing` already takes).
+const MARQUEE_START_DELAY_MS = 1500;
+const MARQUEE_END_PAUSE_MS = 900;
+const MARQUEE_PX_PER_SEC = 40;
+
 const styles = StyleSheet.create({
-  // One horizontal band: thumb, text, chevron.
+  // One horizontal band: thumb, text, chevron. `flex-start`, not `center` —
+  // the thumb's fixed 2:3 ratio (96px wide, 144px tall) is reliably taller
+  // than a short text column (a one-line title, no author, no meta), and
+  // centering the row vertically against that tall thumb was starting the
+  // title partway down the card instead of at its top edge. `chevron` below
+  // opts back into centering on its own, since a decorative arrow should
+  // still sit centred against the thumb regardless of how tall the text is.
   card: {
     flexDirection: 'row',
-    alignItems: 'center',
+    // `stretch`, not `flex-start` — the thumb sets its own `alignSelf:
+    // 'flex-start'` so it is unaffected, but `text` needs the full row
+    // height so its own `bottomRow` (badge/meta/action) can anchor to the
+    // row's true bottom edge via a flex spacer, the same way the cover
+    // tile's badge already sits right above ITS card's own bottom edge —
+    // on explicit instruction that the row variant's badge should match
+    // that, not just sit at the bottom of a text column shorter than the
+    // thumb beside it.
+    alignItems: 'stretch',
     gap: space.md,
-    padding: space.xs,
+    // `sm`, not `xs` — on explicit instruction that the thumb/text/badge
+    // were reading too close to the card's own border.
+    padding: space.sm,
     backgroundColor: color.white,
     borderRadius: radius.card,
     // A hairline keeps adjacent rows separable on a white screen where the
@@ -455,6 +622,17 @@ const styles = StyleSheet.create({
   cardCover: {
     flexDirection: 'column',
     alignItems: 'stretch',
+    // `card`'s own `gap: space.md` is for the ROW variant's horizontal
+    // thumb/text/chevron spacing — this switches to a column but never
+    // reset it, so all 16dp leaked in as a gap between EVERY child here
+    // (image, meta, title, author, badge), four times over. Found on-device
+    // by colouring each slot's background and measuring the pixels between
+    // them, not a guess: it was the actual reason this tile kept reading
+    // too tall no matter how much the slots themselves were trimmed.
+    // `xs`, not 0 — zero read as too tight once the leaked `md` gap was
+    // gone entirely, so a small deliberate gap replaces the accidental
+    // large one rather than leaving none at all.
+    gap: space.xs,
     // Tighter than `card`'s own implicit `space.sm` reasoning would suggest —
     // this tile packs a cover, a meta row, a title and an author line into a
     // fixed width, and every side of padding is height the shelf spends on
@@ -470,11 +648,14 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     elevation: 0,
   },
-  // The skeleton reuses the card's own layout so nothing shifts when data lands.
+  // The skeleton reuses the card's own layout so nothing shifts when data
+  // lands. `flex-start` here, unlike `card`'s own `stretch`, is fine: this
+  // is a loading state with no `bottomRow` to anchor to the bottom, so
+  // there is nothing for stretching the text column to accomplish yet.
   row: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: space.md,
   },
   // A book's own 2:3 ratio, not a square — matched against the reference
@@ -577,34 +758,46 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: space.xs,
   },
-  // Publisher, format chip and access badge on one line — the row variant's
-  // shape, where the text column is wide enough for all three left-aligned.
+  // A flexible spacer between the top block (meta/title/author) and the
+  // bottom block (`bottomRow`/`progress`) — `text` now stretches to the
+  // thumb's own height (`card`'s own `alignItems: 'stretch'`), and without
+  // this the bottom block would just sit under the author line with all the
+  // extra height as dead space beneath it, instead of at the row's true
+  // bottom edge the way `card`'s own padding already puts the thumb.
+  bottomSpacer: {
+    flex: 1,
+  },
+  // Publisher and the format chip on one line — the row variant's shape,
+  // where the text column is wide enough for both left-aligned. The access
+  // badge used to sit here too; see `MetaRow`'s own header note for why it
+  // moved to the foot of the card instead.
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
-  },
-  // The cover tile's shape: publisher and badge pinned to opposite ends of a
-  // narrower row (no format chip here — see MetaRow's own header note).
-  // `metaRowSlot`'s fixed height plus `publisher`'s own `flexShrink` is what
-  // keeps a long publisher name from pushing the badge instead of truncating
-  // against it.
-  metaRowSpread: {
-    justifyContent: 'space-between',
   },
   // A little more air above the action than the `xs` the text stack uses, so the
   // button reads as a separate affordance rather than a fourth line of metadata.
   // No margin of its own — it now sits inside `bottomRow`, which already
   // supplies the gap above this whole line.
   action: {},
-  // `meta` and `action` share this row, pinned to opposite ends — see the
-  // header comment where it's used.
+  // `bottomRowLeft` (badge + meta) and `action` pin to opposite ends — see
+  // the header comment where this is used.
   bottomRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: space.sm,
     marginTop: space.xs,
+  },
+  // The badge and the meta line share this row's left side rather than each
+  // claiming a line of their own — both are short, so stacking them would
+  // spend a whole extra row of height on very little text.
+  bottomRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    flexShrink: 1,
   },
   metaLine: {
     flexShrink: 1,
@@ -632,14 +825,17 @@ const styles = StyleSheet.create({
   },
   // Aleo (serif) in both variants — a book's own title, not a UI label, so it
   // reads as printed rather than borrowed from the app's chrome font.
-  // `letterSpacing` is a typographic value with no token group of its own,
-  // same exception `formatChipText` used to take — negative, not the default
-  // 0: Aleo Bold's own tracking reads as loose at this size, and a title this
+  // `TITLE_SIZE`/`TITLE_LINE_HEIGHT`, not `type.cardTitle.size`/
+  // `.lineHeight` — see that constant's own comment for why this is a
+  // scoped override rather than a shared-token change. `letterSpacing` is a
+  // typographic value with no token group of its own, same exception
+  // `formatChipText` used to take — negative, not the default 0: Aleo
+  // Bold's own tracking reads as loose at this size, and a title this
   // visually important is where that shows most.
   title: {
     fontFamily: type.cardTitle.fontFamily,
-    fontSize: type.cardTitle.size,
-    lineHeight: type.cardTitle.lineHeight,
+    fontSize: TITLE_SIZE,
+    lineHeight: TITLE_LINE_HEIGHT,
     letterSpacing: -0.3,
     color: color.textPrimary,
   },
@@ -648,9 +844,8 @@ const styles = StyleSheet.create({
   // typography page lists all-caps as something to explicitly avoid
   // ("especially for paragraphs or text"), so this is deliberately NOT the
   // bold, letter-spaced, forced-uppercase chip treatment an earlier pass
-  // gave it. `flexShrink` only matters in `metaRowSpread` (`justifyContent`
-  // there has nothing to compress against otherwise) — harmless in the
-  // plain `metaRow` case, which never runs short of width.
+  // gave it. `flexShrink` is harmless in `metaRow`, which never runs short
+  // of width now that it holds only publisher and format.
   publisher: {
     flexShrink: 1,
     fontFamily: type.cardMeta.fontFamily,
@@ -689,30 +884,90 @@ const styles = StyleSheet.create({
   },
   // Fixed-height slots for the cover tile — see the header comment where
   // they're used. `titleSlot` reserves two full lines regardless of how many
-  // the actual title needs; the other two reserve one line's (or the meta
-  // row's tallest child's) worth of space whether or not their content is
-  // present. `metaRowSlot` additionally clips: it is the one slot whose
-  // content is a ROW that could in principle run wider than the tile
-  // (`metaRow`'s own header comment), and a clipped edge reads as intentional
-  // where an overlapping second line over the title does not.
+  // the actual title needs; the others reserve one line's worth of space
+  // whether or not their content is present. `metaRowSlot` additionally
+  // clips: it is the one slot whose content is a ROW that could in
+  // principle run wider than the tile (`metaRow`'s own header comment), and
+  // a clipped edge reads as intentional where an overlapping second line
+  // over the title does not.
+  //
+  // EACH OF THE FOUR CAPTION SLOTS BELOW ALSO CARRIES ITS OWN
+  // `paddingHorizontal: space.xs`, on explicit instruction that the text and
+  // the badge were reading too close to the tile's own left/right border.
+  // It is added here rather than to `cardCover`'s own padding, which stays
+  // untouched — widening THAT padding would also narrow the cover image
+  // (`width: '100%'` of whatever `cardCover` leaves it), and the image's own
+  // size is explicitly not what this instruction was about. The image
+  // therefore stays flush at its original inset; only the caption column
+  // sits a little further in from the edge than it does.
   metaRowSlot: {
-    height: BADGE_HEIGHT,
+    height: type.cardMeta.lineHeight,
+    paddingHorizontal: space.xs,
     overflow: 'hidden',
-    // No gap before the title — the badge/format row and the title read as
+    // No gap before the title — the publisher line and the title read as
     // one caption block; the real air on this tile belongs to the image
     // above, not between these two lines.
   },
+  // One line, not two — see `MarqueeTitle`'s own header comment for what
+  // replaced the second line: an overflowing title scrolls instead of
+  // wrapping, on explicit instruction that the tile overall was reading too
+  // tall.
   titleSlot: {
-    height: type.cardTitle.lineHeight * 2,
+    height: TITLE_LINE_HEIGHT,
+    paddingHorizontal: space.xs,
   },
   authorSlot: {
     height: type.cardMeta.lineHeight,
+    paddingHorizontal: space.xs,
+  },
+  // `MarqueeTitle`'s own clip — full WIDTH OF THIS SLOT (already inset by
+  // `titleSlot`'s own `paddingHorizontal` above), clipped, so its child
+  // `Text` (deliberately unconstrained — see that component's own
+  // "MEASUREMENT" note) can report its true natural width without also
+  // spilling past the tile visually.
+  marqueeClip: {
+    width: '100%',
+    overflow: 'hidden',
+  },
+  // `alignSelf: 'flex-start'`, not the parent's default `stretch` — a
+  // stretched Text would be forced to the clip's own width, which is
+  // exactly the width `onLayout` must NOT report if the whole measurement
+  // trick is to work.
+  marqueeText: {
+    alignSelf: 'flex-start',
+  },
+  // The badge's new slot at the tile's foot — see the header comment where
+  // it's used. `BADGE_HEIGHT` (not `cardMeta.lineHeight`, like the other
+  // text-only slots) because this is the one slot whose real content is a
+  // pill, not a text line — the same source `AccessTierBadge`'s own
+  // rendered height comes from (see that constant's own comment).
+  // `alignItems: 'flex-start'` keeps the pill at its own intrinsic width
+  // rather than stretching it to the tile's full, wider column. No
+  // `marginTop` any more — on explicit instruction that the tile overall
+  // was still reading too tall even after the previous pass, and this was
+  // the one remaining margin left to give back without touching the cover
+  // image's own protected ratio.
+  // `marginBottom: space.xs`, on top of `cardCover`'s own `xs` padding, so
+  // the badge's gap to the tile's bottom border totals `sm` (8) — the same
+  // total the row variant gets from `card`'s own `padding: space.sm` alone.
+  // Without it this was the one edge of the badge still inset by only `xs`
+  // (4) while every other badge-to-border measurement in both variants
+  // (including this same slot's own `paddingHorizontal` below) already
+  // matches at 8.
+  badgeSlot: {
+    height: BADGE_HEIGHT,
+    paddingHorizontal: space.xs,
+    marginBottom: space.xs,
+    alignItems: 'flex-start',
   },
   // Two borders on a rotated square: a chevron without an icon font, since none
-  // is installed.
+  // is installed. `alignSelf: 'center'` opts back into vertical centering
+  // now that `card` itself is `flex-start` — a decorative arrow should stay
+  // centred against the thumb regardless of how tall the text column is.
   chevron: {
     width: CHEVRON,
     height: CHEVRON,
+    alignSelf: 'center',
     borderTopWidth: 1,
     borderRightWidth: 1,
     borderColor: color.textSecondary,
@@ -724,10 +979,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.card,
   },
   // Each bar stands at the height of the line of text it replaces.
-  barTitle: { height: type.cardTitle.lineHeight, width: '100%' },
+  barTitle: { height: TITLE_LINE_HEIGHT, width: '100%' },
   barMeta: { height: type.cardMeta.lineHeight, width: '60%' },
-  // The cover skeleton's stand-in for the meta row — same height
-  // `metaRowSlot` reserves for the real one, narrower than a text bar since
-  // it stands for a badge pill rather than a line of copy.
+  // The cover skeleton's stand-in for the badge — same height `badgeSlot`
+  // reserves for the real one, narrower than a text bar since it stands for
+  // a pill rather than a line of copy.
   barBadge: { height: BADGE_HEIGHT, width: space.xl * 2 },
 });

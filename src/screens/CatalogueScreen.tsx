@@ -32,7 +32,14 @@
 // institution is selected. loan/hold are joined per item from the library cache
 // so each badge reflects the reader's live holdings without a per-card call.
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import {
+  ScrollView,
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import EmptyState from '@/components/EmptyState';
@@ -80,6 +87,12 @@ const HERO_UPDATED_LABEL = 'Updated daily';
 // as tall and cramped relative to how little of the row's own width it used.
 const COVER_CARD_WIDTH = space.xl * 5 + space.md;
 
+// A tile's own width plus the gap the carousel puts after it (`styles.carousel`'s
+// own `gap`) — the fixed distance from one tile's left edge to the next
+// one's, which is what turns an index into an x-position for visibility
+// math (see `isCoverTileVisible`) without needing a per-tile `onLayout`.
+const COVER_CARD_STEP = COVER_CARD_WIDTH + space.md;
+
 export interface CatalogueScreenProps {
   institution: Institution;
 }
@@ -123,6 +136,28 @@ export default function CatalogueScreen({ institution }: CatalogueScreenProps) {
   // screen for the public feed, and each has its own place to return to. Changing
   // institution is a different feed too, so it starts at the top.
   const { scrollRef, onScroll, onContentSizeChange } = useFeedScrollMemory(institutionId);
+
+  // Feeds each featured tile's own visibility to its `ContentCard`, which
+  // gates the title marquee's start delay (see that component's own note on
+  // its `visible` prop). Every tile has the same known width and gap, so a
+  // tile's x-position is `index * COVER_CARD_STEP` — no per-tile `onLayout`
+  // needed, just this carousel's own scroll offset and viewport width.
+  const [carouselScrollX, setCarouselScrollX] = useState(0);
+  const [carouselViewportWidth, setCarouselViewportWidth] = useState(0);
+  const handleCarouselScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setCarouselScrollX(e.nativeEvent.contentOffset.x);
+  }, []);
+  const handleCarouselLayout = useCallback((e: LayoutChangeEvent) => {
+    setCarouselViewportWidth(e.nativeEvent.layout.width);
+  }, []);
+  const isCoverTileVisible = useCallback(
+    (index: number) => {
+      const tileStart = index * COVER_CARD_STEP;
+      const tileEnd = tileStart + COVER_CARD_WIDTH;
+      return tileEnd > carouselScrollX && tileStart < carouselScrollX + carouselViewportWidth;
+    },
+    [carouselScrollX, carouselViewportWidth],
+  );
 
   let body: ReactNode;
   // No synchronous setState here — only inside the async continuations. A
@@ -224,7 +259,7 @@ export default function CatalogueScreen({ institution }: CatalogueScreenProps) {
             // carousel; which shelf that is comes entirely from the feed.
             const isFeatured = shelfIndex === 0;
 
-            const cards = shelf.publications.map((publication) => {
+            const cards = shelf.publications.map((publication, publicationIndex) => {
               const pubLoan = loans.find((l) => l.itemId === publication.id);
               const pubHold = holds.find((h) => h.itemId === publication.id);
               const access = resolveAccess({
@@ -270,6 +305,7 @@ export default function CatalogueScreen({ institution }: CatalogueScreenProps) {
                     authors={authors}
                     badge={badge}
                     onPress={onPress}
+                    visible={isCoverTileVisible(publicationIndex)}
                   />
                 </View>
               ) : (
@@ -310,6 +346,9 @@ export default function CatalogueScreen({ institution }: CatalogueScreenProps) {
                     horizontal
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={styles.carousel}
+                    onScroll={handleCarouselScroll}
+                    onLayout={handleCarouselLayout}
+                    scrollEventThrottle={16}
                   >
                     {cards}
                   </ScrollView>

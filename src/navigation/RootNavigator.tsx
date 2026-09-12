@@ -141,20 +141,28 @@ const TAB_ROOT_ROUTE_NAMES = new Set([
   'ProfileHome',
 ]);
 
-// `ItemDetail` is reachable from several different screens in each stack
-// (a tab root, a shelf, an institution page…), so a fixed "Item Details"
-// label cannot say which one "back" returns to. `back.title` is React
-// Navigation's own resolved title for whichever screen is actually
-// underneath on THIS push — the same value an iOS back button would show —
-// so the header names that screen instead of repeating a generic label.
-// `options.title` ('Item Details') stays registered as the fallback for the
-// one case `back` cannot cover: no previous screen in the stack.
-function itemDetailHeaderTitle(
+// EVERY PUSHED SCREEN'S HEADER NAMES WHERE "BACK" RETURNS TO, NOT ITSELF —
+// on explicit request, so the title beside the chevron reads the way a
+// native iOS back button does. This custom header has only one text slot
+// there (no separate back-label and centred current-title, the way a native
+// header splits them), so that slot has to pick one job, and this makes it
+// "where back goes" for every push. `back.title` is React Navigation's own
+// resolved title for whichever screen is actually underneath on THIS push.
+// `options.title` (each screen's own registered title, e.g. "Item Details"
+// or a route param like a book's title) is now only the fallback for the
+// one case `back` cannot cover: no previous screen in the stack — a tab
+// root, or a screen pushed directly onto the root stack with nothing under
+// it. `ItemDetail` used to be the one screen special-cased this way, because
+// it is reachable from several different screens and a fixed "Item
+// Details" label could not say which one "back" returns to — that
+// reasoning now applies uniformly rather than just to the one screen it was
+// first solved for.
+function pushedScreenHeaderTitle(
   routeName: string,
   options: NativeStackHeaderProps['options'],
   back: NativeStackHeaderProps['back'],
 ) {
-  if (routeName === 'ItemDetail' && back?.title !== undefined) return back.title;
+  if (back?.title !== undefined) return back.title;
   return options.title ?? routeName;
 }
 
@@ -167,7 +175,7 @@ function AppHeader({ route, options, back, navigation }: NativeStackHeaderProps)
 
   return (
     <TopAppBar
-      title={itemDetailHeaderTitle(route.name, options, back)}
+      title={pushedScreenHeaderTitle(route.name, options, back)}
       onBack={back ? navigation.goBack : undefined}
       topInset={insets.top}
       action={
@@ -243,8 +251,8 @@ function CatalogueNavigator() {
         component={InstitutionDetailScreen}
         options={{ title: 'Institution' }}
       />
-      {/* The header shows where "back" returns to, not a fixed label — see
-          `itemDetailHeaderTitle`'s own comment above. `title` here is only
+      {/* The header shows where "back" returns to, not this title — see
+          `pushedScreenHeaderTitle`'s own comment above. `title` here is only
           the fallback for no previous screen, and it stays work-type-
           agnostic on purpose: a book, a journal article and an audiobook all
           push this same route, and 'Book Details' used to stay on screen for
@@ -443,10 +451,11 @@ function ProfileNavigator() {
         component={ProfileScreen}
         options={{ title: 'Profile' }}
       />
-      {/* Pushed from the "Reading Preferences" row on screen 10. The title
-          matches that row's own label, so the header echoes the thing that was
-          tapped. `AppHeader` supplies the back chevron because this is a pushed
-          screen rather than a tab root. */}
+      {/* Pushed from the "Reading Preferences" row on screen 10. `title` here
+          is now only the no-back fallback — see `pushedScreenHeaderTitle`'s
+          own comment — since the header actually shown names "Profile", the
+          screen back returns to. `AppHeader` supplies the back chevron
+          because this is a pushed screen rather than a tab root. */}
       <ProfileStack.Screen
         name="ReaderPreferences"
         component={ReaderPreferencesScreen}

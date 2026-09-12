@@ -69,8 +69,19 @@ export default function TypographySection({
 
   return (
     <View style={styles.section} testID="typography-section">
-      <SectionHeader title="Typography" />
-      <Text style={styles.hint}>EPUB only. PDFs use a fixed layout and ignore these.</Text>
+      {/* Own tight-gap wrapper, not a direct child of `section` — `section`'s
+          `lg` gap is sized for the space BETWEEN the four distinct controls
+          below, and applying it here too would put as much air under the
+          title as between two whole controls. Also gains the icon Theme and
+          Font's own top-level headings already carry — this was the one
+          heading on the screen without one. */}
+      <View style={styles.header}>
+        <SectionHeader
+          title="Typography"
+          icon={<Ionicons name="text-outline" size={SECTION_ICON_SIZE} color={color.primary} />}
+        />
+        <Text style={styles.hint}>EPUB only. PDFs use a fixed layout and ignore these.</Text>
+      </View>
 
       <View style={styles.group}>
         <SectionHeader
@@ -143,17 +154,24 @@ export default function TypographySection({
 
 const styles = StyleSheet.create({
   // No outer margin — the screen owns where the section sits (§8). Bordered,
-  // rounded card — see ThemeSection's own note. `md`, not `sm`: text size,
+  // rounded card — see ThemeSection's own note. `lg`, matching the gap
+  // `content` puts between this whole card and the next one: text size,
   // line height, letter spacing and page margins are four distinct
-  // controls, not one control split in four, so they need real separation
-  // between them even inside one shared card.
+  // controls, not one control split in four, and a smaller gap here than
+  // between cards read as them belonging to each other instead.
   section: {
-    gap: space.md,
+    gap: space.lg,
     padding: space.md,
     backgroundColor: color.white,
     borderRadius: radius.sheet,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: color.border,
+  },
+  // `sm`, the same title-to-hint gap FontSection's own header uses — see the
+  // note beside this element's own JSX for why it needs a gap distinct from
+  // `section`'s.
+  header: {
+    gap: space.sm,
   },
   iconLabel: {
     fontFamily: typeScale.button.fontFamily,
