@@ -3,6 +3,23 @@
 import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { BookId, ContentFormat } from '@/shared/contracts';
 import type { ReaderTarget } from '@/features/reader/readerBridge';
+import type { NavLink, WorkType } from '@model/types';
+
+/**
+ * Carried only when ItemDetail is reached from the journal drill-down —
+ * absent for an ordinary book/audiobook push. `workType: 'article'` is what
+ * makes ItemDetailScreen render screen 04 instead of falling back to screen
+ * 05 (Publication.workType is never 'article' — wokay's @type enum has no
+ * value for it yet, Q-1b). `articleContext` supplies the journal/volume/issue
+ * names for screen 04's context line — a Publication has no parent-journal
+ * reference of its own, so this is display data the caller already has,
+ * exactly like Shelf's own `title` param.
+ */
+export interface ArticleContext {
+  journalTitle: string;
+  volumeTitle?: string;
+  issueTitle?: string;
+}
 
 /**
  * Which form PersonalAccountScreen shows. It rides in the route params rather than
@@ -43,7 +60,7 @@ export type CatalogueStackParamList = {
   // Institution picker — CAP-3 selection flow.
   InstitutionList: undefined;
   InstitutionDetail: { institutionId: string };
-  ItemDetail: { itemId: string };
+  ItemDetail: { itemId: string; workType?: WorkType; articleContext?: ArticleContext };
   // Screen 02 — sign-in sheet. Institution is read from institutionStore;
   // no params needed because selection always precedes navigation here.
   SignIn: undefined;
@@ -63,6 +80,31 @@ export type CatalogueStackParamList = {
   // store, so a caller cannot reach the screen without naming an institution.
   // A shelf only exists inside one institution's catalogue.
   Shelf: { shelfId: string; title: string; institutionId: string };
+  // Journal hierarchy drill-down — Journal Details → Volumes & Issues → Issue
+  // Articles → ItemDetail (screen 04). title/coverUrl are passed so the header
+  // and cover render without a network call.
+  Journal: { workId: string; title: string; institutionId: string; coverUrl?: string };
+  // Volumes & Issues (screen 03). `volumes` is the journal's own already-
+  // fetched `children` list — JournalScreen has just made this exact call, so
+  // this screen makes no duplicate fetch of the same root work feed. No
+  // cover — the reference layout for this screen is a plain list, not a
+  // cover-led page.
+  JournalVolumes: {
+    journalTitle: string;
+    institutionId: string;
+    volumes: NavLink[];
+  };
+  // Issue Articles (screen 04's list). workId is the ISSUE's own work id —
+  // this screen makes the one lazy getWork() call for it, same as today's
+  // per-issue expand in JournalScreen used to. volumeTitle is absent when the
+  // journal has no volume level (an issue sitting directly under the journal).
+  JournalIssue: {
+    journalTitle: string;
+    institutionId: string;
+    volumeTitle?: string;
+    issueTitle: string;
+    workId: string;
+  };
   // Personal-account (OIDC) form, reached from the access gate's "Personal
   // account" card. Registered here as well as in Profile for the same reason
   // SignIn is: a flow that started in this tab finishes in it.
@@ -86,7 +128,7 @@ export type CatalogueStackParamList = {
 /** Search nested stack — shares ItemDetail shape. */
 export type SearchStackParamList = {
   SearchHome: undefined;
-  ItemDetail: { itemId: string };
+  ItemDetail: { itemId: string; workType?: WorkType; articleContext?: ArticleContext };
   // Same reason ItemDetail is registered in both stacks: the gate can be
   // raised from either origin. SignIn and InstitutionList are registered here
   // too, for the same reason — so "Through my institution" can stay on
@@ -128,7 +170,7 @@ export type SearchStackParamList = {
 export type LibraryStackParamList = {
   LibraryHome: undefined;
   InstitutionList: undefined;
-  ItemDetail: { itemId: string };
+  ItemDetail: { itemId: string; workType?: WorkType; articleContext?: ArticleContext };
   AccessGate: { itemId: string; title: string; authors: string };
   SignIn: undefined;
   PersonalAccount: { mode: PersonalAccountMode };

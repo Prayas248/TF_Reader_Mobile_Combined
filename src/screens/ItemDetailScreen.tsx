@@ -3,21 +3,26 @@
 // and SearchStack, which is why the route type below stays the minimal shape
 // both stacks agree on rather than either stack's own NativeStackScreenProps.
 //
-// WORK TYPE IS HARDCODED, NOT DERIVED. Nothing in the feed says whether a title
-// is a book or an article yet: wokay's published `@type` enum only confirms
-// Book and Audiobook, so there is no article/journal value to read. The fetch
-// below always builds a book (`BOOK_WORK_TYPE`) because that is the only work
-// type any real fixture or endpoint can currently produce — passing 'article'
-// from there would be inventing data, not reading it.
+// WORK TYPE IS ROUTE-SUPPLIED, NOT DERIVED FROM THE FETCH. Nothing in the
+// feed says whether a title is a book or an article: wokay's published
+// `@type` enum only confirms Book and Audiobook, so `Publication.workType` is
+// never `'article'`. What tells this screen an item is an article is CONTEXT
+// — the caller already knows, because it just came from the journal
+// drill-down (JournalIssueScreen/JournalScreen navigate here with
+// `workType: 'article'` in the route params, see navigation/types.ts's
+// `ArticleContext`). `route.params.workType ?? publication.workType ??
+// BOOK_WORK_TYPE` is the precedence: an explicit route param wins, then
+// whatever the normalizer read off `@type`, then the book fallback. The
+// moment wokay confirms a journal/article `@type` value (Q-1b), only
+// `WOKAY_TYPE_MAP` in opds/normalize.ts needs extending — this screen's own
+// fallback chain does not change.
 //
-// THE ARTICLE PRESENTATION EXISTS AND IS UNREACHABLE FROM TODAY'S FETCH, AND
-// THAT IS FINE. Same shape as `resolveAccess`'s "no acquisition link" branch:
-// kept and tested directly rather than treated as a claim about code that does
-// not exist. `renderArticleContent` below is exported so a test can hand it a
-// hand-built `ItemDetail` with `workType: 'article'` — see
-// ItemDetailScreen.test.tsx. The normalizer already maps `schema.org/Book` and
-// `schema.org/Audiobook`; the moment wokay confirms journal/article `@type`
-// values (Q-1b), only `WOKAY_TYPE_MAP` in opds/normalize.ts needs extending.
+// THE ARTICLE PRESENTATION IS NOW REACHABLE — it used to be dead code (kept
+// and tested directly, same shape as `resolveAccess`'s "no acquisition link"
+// branch) because nothing ever set `workType: 'article'` before the journal
+// drill-down existed. `renderArticleContent` below stays exported so a test
+// can still hand it a hand-built `ItemDetail` directly — see
+// ItemDetailScreen.test.tsx.
 //
 // ACCESS IS RESOLVED REACTIVELY, NOT ONCE AT FETCH TIME. The publication is stored
 // separately and detail is recomputed whenever loans/holds change (after a borrow,
@@ -29,6 +34,7 @@
 // independent of them. Same shape as InstitutionDetailScreen: a skeleton while
 // the fetch is in flight, ErrorState on rejection, the content once resolved. No
 // ActivityIndicator — skeletons replace spinners.
+import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {
   useCallback,
@@ -39,7 +45,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 
 import type { BookId, ContentFormat } from '@/shared/contracts';
@@ -47,6 +53,7 @@ import { useCurrentSession, useIsSignedIn } from '@access/currentSession';
 import { isNotEntitled, resolveAccess } from '@access/resolveAccess';
 import { ActionBar } from '@components/ActionBar';
 import { AccessTierBadge } from '@components/AccessTierBadge';
+import { DescriptionSection } from '@components/DescriptionSection';
 import { ErrorState } from '@components/ErrorState';
 import { OfflineBanner } from '@components/OfflineBanner';
 import { Skeleton } from '@components/Skeleton';
@@ -63,6 +70,8 @@ import { CATALOGUE_ERROR_COPY, catalogueErrorVariant, WIRE_ERROR_COPY } from '@m
 import { isLicenceFailure, LicenceError } from '@/licence/LicenceSource';
 import { ERROR_CODES } from '@model/types';
 import type { ActionId, ErrorCode, Publication, WorkType } from '@model/types';
+import type { ArticleContext } from '../navigation/types';
+import { formatPublishedDate } from '@model/formatPublishedDate';
 import { useDownloadStore } from '@store/downloadStore';
 import { useInstitutionStore } from '@store/institutionStore';
 import { useLibraryStore } from '@store/libraryStore';
@@ -70,7 +79,10 @@ import { useRecentlyViewedStore } from '@store/recentlyViewedStore';
 import { color, elevation, radius, space, type as typeScale } from '@theme/tokens';
 
 interface ItemDetailRouteProps {
-  route: { params: { itemId: string } };
+  // workType/articleContext are present only when this screen is reached from
+  // the journal drill-down — see this file's header and navigation/types.ts's
+  // `ArticleContext`. Absent for an ordinary book/audiobook push.
+  route: { params: { itemId: string; workType?: WorkType; articleContext?: ArticleContext } };
   // Hand-typed rather than one stack's generated props, same reason as
   // `route` above — this screen is shared by three stacks, and `navigate` is
   // typed for exactly the real calls it makes: opening the access gate when
@@ -127,103 +139,6 @@ const COVER_HEIGHT = space.xl * 9;
 const GENERIC_MESSAGE = "We couldn't load this title.";
 const LICENCE_GENERIC_MESSAGE = "That action couldn't be completed. Please try again.";
 
-const MONTH_NAMES = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-] as const;
-
-// `detail.published` is whatever date string the feed sent — normalize.ts
-// documents it as ISO (`YYYY-MM-DD...`), same shape the fixtures use. Falls
-// back to the raw string rather than throwing or hiding the date entirely if
-// that shape is ever wrong — a slightly-off-format date is still more useful
-// to a reader than no date at all.
-function formatPublishedDate(iso: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (match === null) return iso;
-  const [, year, month, day] = match;
-  const monthName = MONTH_NAMES[Number(month) - 1];
-  if (monthName === undefined) return iso;
-  return `${Number(day)} ${monthName} ${year}`;
-}
-
-// Lines shown before "Read more" appears — a real book-detail refinement
-// requirement (§9): today's descriptions are one-liners with nothing to
-// clamp, but the section has to already behave correctly the day a genuine,
-// paragraph-length abstract arrives.
-const DESCRIPTION_CLAMP_LINES = 4;
-// A rough proxy for "long enough to likely exceed the clamp" — approximated
-// by length rather than a measure-then-clamp render pass (RN's
-// `onTextLayout` reports the CLAMPED line count while `numberOfLines` is
-// already set, so measuring accurately needs an extra unclamped render
-// first). Good enough for "does 'Read more' need to exist at all", not
-// pretending to be an exact line count.
-const DESCRIPTION_LONG_THRESHOLD = 220;
-
-// A real, structural section — always rendered, in one of two states: the
-// feed's own `description`, verbatim (whatever it currently is — the
-// catalogue source's real dev-fixture placeholder text included, on
-// explicit instruction: rendering exactly what the field carries, same
-// "render what came back" rule the rest of this app already follows for
-// every other field, rather than this screen quietly deciding on the
-// content's behalf which values count as real), or the honest "not
-// available yet" line when the field is genuinely absent. Never omitted
-// outright: an earlier pass hid the whole section when `description` was
-// absent, which read as the page quietly deciding for itself what to show
-// rather than a stable place a reader can expect this information to live.
-//
-// A REAL COMPONENT, NOT A PLAIN FUNCTION LIKE `MetaRow`/`FormatStrip` BELOW.
-// It owns `expanded` state, and hooks follow whichever component is
-// actually rendering — a plain function called mid-render (the shape every
-// other local helper in this file takes) would register its hooks against
-// `ItemDetailScreen`'s own fiber instead, the same trap `coverFailed`'s own
-// comment on the main component already documents. Invoked as JSX for
-// exactly that reason.
-function DescriptionSection({ description }: { description?: string }): ReactElement {
-  const [expanded, setExpanded] = useState(false);
-
-  const long = description !== undefined && description.length > DESCRIPTION_LONG_THRESHOLD;
-
-  return (
-    <View style={styles.sectionBlock}>
-      {/* "About this title", not "About this book" — this section renders
-          inside `renderBookContent`, which covers every AUDIO-format
-          audiobook too (workType 'book' spans both), and an audiobook is
-          not a book. */}
-      <SectionHeader title="About this title" />
-      {description !== undefined ? (
-        <>
-          <Text
-            style={styles.description}
-            numberOfLines={!expanded && long ? DESCRIPTION_CLAMP_LINES : undefined}
-          >
-            {description}
-          </Text>
-          {long && (
-            <Pressable
-              onPress={() => setExpanded((value) => !value)}
-              accessibilityRole="button"
-              accessibilityLabel={expanded ? 'Show less' : 'Read more'}
-            >
-              <Text style={styles.readMoreLabel}>{expanded ? 'Show less' : 'Read more'}</Text>
-            </Pressable>
-          )}
-        </>
-      ) : (
-        <Text style={styles.descriptionUnavailable}>Description not available yet.</Text>
-      )}
-    </View>
-  );
-}
 
 // Screen 05's presentation. Exported for the same reason `renderArticleContent`
 // below is — a test can render it directly from a hand-built `ItemDetail`
@@ -302,9 +217,24 @@ export function renderBookContent(
           )}
         </View>
 
-        <Text style={styles.title}>{detail.title}</Text>
-
-        {detail.subtitle !== undefined && <Text style={styles.subtitle}>{detail.subtitle}</Text>}
+        {/* Title/subtitle on the left, Share as a small icon button on the
+            right — same placement JournalScreen uses for its own Share
+            button, so a book/audiobook and a journal share one visual
+            language for this action rather than each inventing its own. */}
+        <View style={styles.titleRow}>
+          <View style={styles.titleColumn}>
+            <Text style={styles.title}>{detail.title}</Text>
+            {detail.subtitle !== undefined && <Text style={styles.subtitle}>{detail.subtitle}</Text>}
+          </View>
+          <Pressable
+            style={styles.shareIconButton}
+            onPress={() => void Share.share({ message: detail.title })}
+            accessibilityRole="button"
+            accessibilityLabel="Share"
+          >
+            <Ionicons name="share-outline" size={18} color={color.primary} />
+          </Pressable>
+        </View>
 
         {/* "By" carried in the primary text colour with the names themselves in
           the link colour, which is how the mockup sets this line. Nested rather
@@ -389,7 +319,10 @@ export function renderBookContent(
             of Coalition in Korea" included) — reversed on explicit
             instruction: show the actual field value, not this screen's own
             judgement about which values count as real. */}
-        <DescriptionSection description={detail.description} />
+        {/* "About this title", not "About this book" — this section renders
+            for every AUDIO-format audiobook too (workType 'book' spans
+            both), and an audiobook is not a book. */}
+        <DescriptionSection title="About this title" description={detail.description} />
 
         {/* TABLE OF CONTENTS IS OMITTED ENTIRELY. No endpoint, no model
             field — there is nothing to leave a gap for, and a lone heading
@@ -459,10 +392,8 @@ function QueuePositionLine({ access }: { access: ItemDetail['access'] }): ReactE
 // no `onPress`, no active/inactive pair — `AccessTierBadge` is the same shape
 // one line below every call site: a resolved value that is looked at.
 //
-// NOT MUTED LIKE `UnavailableTag`. This is real, confirmed data — the
-// contract states it plainly — so it reads at full opacity in the primary
-// text colour, visually distinct from the "we don't have this yet" tags
-// beside it.
+// NOT MUTED. This is real, confirmed data — the contract states it plainly —
+// so it reads at full opacity in the primary text colour.
 function FormatStrip({ format }: { format: ContentFormat }): ReactElement {
   return (
     <View testID="format-strip" style={styles.formatStrip} accessibilityRole="text">
@@ -471,158 +402,65 @@ function FormatStrip({ format }: { format: ContentFormat }): ReactElement {
   );
 }
 
-// The five mockup tab labels, verbatim from index.html's "Screen 04 — four
-// elements" gap list. Real mockup names, not invented ones — only the CONTENT
-// behind four of them is missing. PDF is left inert alongside the rest; see the
-// comment on the tab row below for why it is not made the exception.
-const ARTICLE_TAB_LABELS = [
-  'Full Article',
-  'Figures & data',
-  'Citations',
-  'Metrics',
-  'PDF',
-] as const;
-
-// A mockup element the current contract has no data for — shown, not hidden,
-// and honestly labelled as unavailable. Same principle FilterChip's own
-// `disabled` prop already documents for screen 12's rows: "Dropping it would
-// make the screen look complete when it is not... a greyed control that
-// announces itself as disabled is the honest version."
-//
-// KEPT LOCAL RATHER THAN PROMOTED TO `src/components/` (CONVENTIONS §7) —
-// nothing outside this screen needs it yet. If a second screen does, it earns
-// its own folder then.
-//
-// A PLAIN VIEW, NOT A PRESSABLE. Neither call site below has anything to do on
-// a tap — there is no citation to fetch, no more specific type to reveal — so a
-// disabled Pressable would promise an interaction that does not exist.
-// `AccessTierBadge` sets the same precedent one line above every call site: a
-// resolved value that is looked at, not pressed.
-//
-// ONE SHAPE NOW. This used to be three — a bordered pill (screen 05's price)
-// and a full-width ruled row (screen 05's Table of Contents) alongside this
-// one — but the price tag was a removed field (§10 of the book-detail
-// refinement: don't expose a meaningless "unavailable" pill) and the TOC row
-// became a `SectionHeader` + explanatory line instead (a real section, not a
-// muted tag standing in for one). Screen 04's eyebrow and citation link are
-// the only callers left, and both already wanted this shape.
-function UnavailableTag({
-  label,
-  accessibilityLabel,
-  icon,
-}: {
-  label: string;
-  /**
-   * Overrides what a screen reader announces, for the one call site where the
-   * visible text alone would not say enough — the type tag is a real mockup
-   * string ("Research article") that this contract cannot confirm, and a
-   * sighted reader gets that from the muted styling but a screen reader needs
-   * it said explicitly. Defaults to the visible label, unchanged from before
-   * this prop existed.
-   */
-  accessibilityLabel?: string;
-  /**
-   * Leading glyph, for the one call site whose mockup draws one — the quote
-   * mark against "Download citation". Decorative: the label beside it already
-   * carries the meaning, so it is never the only thing announced.
-   */
-  icon?: ComponentProps<typeof MaterialCommunityIcons>['name'];
-}): ReactElement {
+// Subjects, on both screen 02 (journal) and screen 04 (article): real,
+// confirmed data (`Publication.subjects`/the journal work feed's own
+// `subjects`), shown as a static, non-interactive pill — same "real data,
+// not a control" shape `FormatStrip` above already uses for the format
+// badge. NOT the interactive `SubjectChip` component: that models
+// selection/filtering behind a required `onPress`, and there is no
+// subject-browse destination in this app to wire it to — a disabled
+// Pressable here would promise an interaction that does not exist, the same
+// trap this file's former `UnavailableTag` comment warned against.
+function SubjectsRow({ subjects }: { subjects: string[] }): ReactElement | null {
+  if (subjects.length === 0) return null;
   return (
-    <View
-      testID="unavailable-tag"
-      style={styles.unavailableInline}
-      accessibilityRole="text"
-      accessibilityLabel={accessibilityLabel ?? label}
-    >
-      {icon !== undefined && (
-        <MaterialCommunityIcons
-          name={icon}
-          size={typeScale.smallLabel.size}
-          color={color.textSecondary}
-        />
-      )}
-      <Text style={styles.unavailableInlineLabel} numberOfLines={1}>
-        {label}
-      </Text>
-    </View>
-  );
-}
-
-// The five mockup tab labels, laid out as a plain, non-interactive row rather
-// than as chips — screen 04's actual mockup draws this as text with a divider
-// beneath it, not as pills, so this stays visually apart from `UnavailableTag`
-// even though the two exist for the same reason.
-//
-// NO ACTIVE TAB. The mockup shows "Full Article" active with a teal underline,
-// but that is true only when the other four genuinely lead somewhere. None of
-// the five does here, so marking one active would claim a working tab strip
-// with four broken siblings — the same half-measure the file already avoids by
-// not making PDF an exception.
-//
-// NOT THE SHARED `Tabs` COMPONENT. `Tabs` always renders `accessibilityRole=
-// "tablist"`/`"tab"` and a live `onChange`; both tell an assistive-tech user
-// these five switch to something, which none of them do. This stays a local,
-// inert row instead of the interactive component wearing a disabled coat of
-// paint (CONVENTIONS §7 — `Tabs` is not modified to grow a state it does not
-// otherwise need).
-// ONE LINE THAT SCROLLS, NOT A WRAPPING BLOCK. The mockup draws all five
-// labels on a single line under the metadata. At `type.button`'s 15pt they
-// wrapped onto two lines on a phone, which read as a paragraph of links rather
-// than a tab strip; at `type.smallLabel` they fit, and the horizontal scroll
-// covers the narrowest devices and the largest accessibility text sizes without
-// the row ever reflowing.
-function InertTabRow({ labels }: { labels: readonly string[] }): ReactElement {
-  return (
-    <View style={styles.tabRow}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabRowLabels}
-      >
-        {labels.map((label) => (
-          <Text key={label} style={styles.tabRowLabel} numberOfLines={1}>
-            {label}
+    <View style={styles.subjectsRow}>
+      {subjects.map((subject) => (
+        <View key={subject} style={styles.subjectChip}>
+          <Text style={styles.subjectChipLabel} numberOfLines={1}>
+            {subject}
           </Text>
-        ))}
-      </ScrollView>
-      <View style={styles.tabRowDivider} />
+        </View>
+      ))}
     </View>
   );
 }
 
-// Screen 04's presentation. The board's field list for this screen is
-// deliberately smaller than the book's — title, authors, published date, the
-// badge, the abstract and the actions — so publisher, ISBN, page count, cover
-// and subtitle are not read here even though `ItemDetail` carries them: they
-// are book fields the article mockup never asked for.
+// Screen 04's presentation. Deliberately smaller than the book's field list —
+// publisher, ISBN, cover and subtitle are still not read here even though
+// `ItemDetail` carries them: they are book fields the article mockup never
+// asked for. `published`/`numberOfPages` ARE read now, inside the "Published
+// in" card below (moved out of the plain under-title line they used to be,
+// on explicit instruction, once the card existed and repeating the same fact
+// twice on one screen became the problem worth fixing).
 //
-// NO PAGE RANGE. The board lists it as a screen 04 field, but `Publication` has
-// no field for it and neither backend contract mentions one, so there is
-// nothing to read. Left absent rather than invented — this is one of the four
-// screen 04 gaps index.html already tracks under "mockup elements with no data
-// behind them"; this file does not re-decide it, just leaves the space out.
+// NO PAGE RANGE. `Publication` has no field for it and neither backend
+// contract mentions one, so there is nothing to read. Left absent rather than
+// invented. (`numberOfPages` is a different, real field — a whole-article
+// page count, not a range within the issue — and is shown when present.)
 //
-// DOI IS NOT ONE OF THOSE GAPS. It is a settled removal, not an open question —
-// design still need telling, but the field is gone for good, so nothing here
-// renders even a blank line for it. Download citation, the five tabs and the
-// content-type label ARE the other three gaps, and they render below as
-// `UnavailableTag`/`InertTabRow` — visible, muted, not invented — rather than
-// left absent.
-// LEFT-ALIGNED, NOT CENTRED, AND IN THE MOCKUP'S OWN ORDER. Screen 04 is a
-// reading surface: an eyebrow, a title that runs to three lines, an author line,
-// a metadata line, then the tab strip and the abstract, all ranged left off a
-// single margin. Centring a 24pt title over a left-ranged abstract gives the
-// block two competing edges, and it is what the Monday branding pass is
-// stripping out of the empty and error screens for the same reason. Screen 05
-// keeps its centred column — a cover-led layout has a real axis to centre on;
-// this one does not.
+// NO CONTENT-TYPE EYEBROW ("Research Article"/"Review Article"), NO
+// "Download citation" ROW, NO TAB STRIP. All three used to render as visible-
+// but-muted placeholders for an older, separate mockup spec (see git history
+// for that version) — removed on explicit instruction rather than kept: none
+// of the three has real data behind it (wokay's `@type` enum has no
+// article/review distinction; there is no citation endpoint; there is no
+// second, more-specific screen behind any of Full Article/Figures &
+// data/Citations/Metrics/PDF), and showing a placeholder for something that
+// will never resolve is worse than not showing it at all. If wokay ever
+// confirms a real content-type field, it renders here as ordinary text, not
+// as a tag that returns.
 //
-// THE ACTION BAR IS PINNED, NOT SCROLLED. The mockup fixes Read and Download to
-// the bottom of the viewport, and an abstract is long enough that a bar at the
-// end of the scroll is a bar the reader never reaches. It sits outside the
-// ScrollView, which is why this returns a fragment rather than a single
-// ScrollView the way `renderBookContent` still does.
+// LEFT-ALIGNED, NOT CENTRED. Screen 04 is a reading surface: a title that
+// runs to three lines, an author line, then metadata, the badge, the
+// abstract and Subjects, all ranged left off a single margin. Screen 05
+// keeps its centred column — a cover-led layout has a real axis to centre
+// on; this one does not.
+//
+// THE ACTION BAR IS PINNED, NOT SCROLLED. An abstract is long enough that a
+// bar at the end of the scroll is a bar the reader never reaches. It sits
+// outside the ScrollView, which is why this returns a fragment rather than a
+// single ScrollView the way `renderBookContent` still does.
 export function renderArticleContent(
   detail: ItemDetail,
   onAction: (action: ActionId) => void,
@@ -630,61 +468,35 @@ export function renderArticleContent(
   pending?: ActionId,
   /** See renderBookContent. */
   licenceMessage?: string,
+  // Journal/volume/issue names, present only when this article was opened
+  // from the journal drill-down (JournalIssueScreen/JournalScreen pass it as
+  // a route param — see navigation/types.ts's ArticleContext). A Publication
+  // carries no parent-journal reference of its own, so there is nothing to
+  // read here when the article was opened any other way (e.g. Search).
+  articleContext?: { journalTitle: string; volumeTitle?: string; issueTitle?: string },
 ): ReactElement {
+  const issueLine =
+    articleContext !== undefined
+      ? [articleContext.volumeTitle, articleContext.issueTitle].filter(
+          (part): part is string => part !== undefined,
+        )
+      : [];
+
   return (
     <>
       <ScrollView style={styles.articleScroll} contentContainerStyle={styles.articleContent}>
-        {/* Title block — the four lines the mockup groups tightly together, on
-            xs gaps, so they read as one unit against the md gaps separating the
-            sections below. */}
+        {/* Title block — the lines the mockup groups tightly together, on xs
+            gaps, so they read as one unit against the md gaps separating the
+            sections below. NO journal/volume/issue eyebrow here any more —
+            that information lives in ONE place now, the "Published in" card
+            below, rather than twice on the same page. */}
         <View style={styles.articleHeader}>
-          {/* The CONTENT type, not to be confused with the access tier badge
-              below — the two are unrelated axes. "Research article" is the real
-              mockup string (index.html: "Screen 04 — four elements"), kept
-              rather than paraphrased — the same "keep the real name, mark it
-              disabled" rule screen 12's unsupported filter rows already follow.
-              wokay's published `@type` enum only confirms Book and Audiobook
-              (see the file header), so it takes the mockup's eyebrow POSITION
-              but not its live link colour: muted, and a screen reader is told
-              explicitly that the classification is not confirmed. A sighted
-              reader gets that from the styling alone; an assistive-tech user
-              needs it said. workType is NOT derived from `@type` anywhere here;
-              this label is display-only. */}
-          <UnavailableTag
-            label="Research article"
-            accessibilityLabel="Research article — not confirmed by the current contract"
-          />
-
           <Text style={styles.articleTitle}>{detail.title}</Text>
 
           {detail.authors.length > 0 && (
             <Text style={styles.articleAuthors}>{detail.authors.join(', ')}</Text>
           )}
-
-          {/* The mockup pairs a page range with the date on this line. There is
-              no page range to pair — see the header comment — so the date holds
-              the line alone rather than being padded out with an invented
-              second half. */}
-          {detail.published !== undefined && (
-            <Text style={styles.metaRow}>Published · {detail.published}</Text>
-          )}
         </View>
-
-        {/* "Download citation" — a real mockup action with no citation data
-            behind it (no endpoint, no format, nothing to build a file from).
-            Shown inert rather than removed, same rule as the tabs below, and in
-            the mockup's own position: the row under the metadata, quote glyph
-            included. The mockup's other half of this row was the DOI link,
-            which is a settled removal and leaves no gap behind it. */}
-        <UnavailableTag label="Download citation" icon="format-quote-close" />
-
-        {/* None of the five is made an exception, PDF included. A tab's whole
-            point is switching to what it names, and there is nothing behind the
-            other four to switch to — one live tab among four dead ones would
-            still be the half-measure this file is avoiding, and PDF's own file
-            is already Read/Download on the action bar below, not a second
-            entry point worth building. */}
-        <InertTabRow labels={ARTICLE_TAB_LABELS} />
 
         {/* D8 — `not_entitled` renders nothing at all, badge included. `tier`
             is required on AccessResult, so that state carries an OPEN_ACCESS
@@ -699,6 +511,56 @@ export function renderArticleContent(
             without it a waiting reader sees a detail screen with no answer. */}
         <QueuePositionLine access={detail.access} />
 
+        {/* ONE card, not a repeated eyebrow-plus-card: journal/volume/issue
+            (real data on `articleContext`, present only when this article was
+            opened from the journal drill-down — a Publication carries no
+            parent-journal reference of its own, so there is nothing to read
+            here when opened any other way, e.g. a Search result), PLUS
+            whatever article-specific facts the publication itself supplies
+            (`published`, `numberOfPages`) — each shown only when actually
+            present, never a placeholder. This is also where an article with a
+            short or missing abstract gets real, useful content instead of a
+            blank scroll area. Non-interactive, same reasoning as
+            SubjectsRow: there is no "open this issue from here" route
+            registered in every stack this screen is shared across (Search,
+            Library), only Catalogue's. */}
+        {(articleContext !== undefined || detail.published !== undefined || detail.numberOfPages !== undefined) && (
+          <View style={styles.publishedInCard}>
+            <MaterialCommunityIcons name="book-open-page-variant-outline" size={22} color={color.primary} />
+            <View style={styles.publishedInText}>
+              {articleContext !== undefined && (
+                <>
+                  <Text style={styles.publishedInLabel}>Published in</Text>
+                  <Text style={styles.publishedInJournal}>{articleContext.journalTitle}</Text>
+                  {issueLine.length > 0 && (
+                    <Text style={styles.publishedInIssue}>{issueLine.join(' · ')}</Text>
+                  )}
+                </>
+              )}
+
+              {(detail.published !== undefined || detail.numberOfPages !== undefined) && (
+                <View
+                  style={
+                    articleContext !== undefined
+                      ? styles.publishedInDivider
+                      : styles.publishedInNoDivider
+                  }
+                >
+                  {detail.published !== undefined && (
+                    <>
+                      <Text style={styles.publishedInLabel}>Published online</Text>
+                      <Text style={styles.publishedInIssue}>{formatPublishedDate(detail.published)}</Text>
+                    </>
+                  )}
+                  {detail.numberOfPages !== undefined && (
+                    <Text style={styles.publishedInIssue}>{detail.numberOfPages} pages</Text>
+                  )}
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
         {/* The abstract is `ItemDetail.description` under the label this screen
             uses for it. Absent entirely — no heading, no empty block — when the
             feed did not supply one, same "leave gaps blank" rule as everywhere
@@ -707,6 +569,15 @@ export function renderArticleContent(
           <View style={styles.abstractBlock}>
             <SectionHeader title="Abstract" />
             <Text style={styles.abstractText}>{detail.description}</Text>
+          </View>
+        )}
+
+        {/* Real data (Publication.subjects) — hidden entirely when empty, not
+            a section with nothing under it. */}
+        {detail.subjects.length > 0 && (
+          <View style={styles.abstractBlock}>
+            <SectionHeader title="Subjects" />
+            <SubjectsRow subjects={detail.subjects} />
           </View>
         )}
       </ScrollView>
@@ -726,7 +597,7 @@ export function renderArticleContent(
 }
 
 export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteProps) {
-  const { itemId } = route.params;
+  const { itemId, workType: routeWorkType, articleContext } = route.params;
   const downloadProgress = useDownloadProgress();
 
   const selectedInstitution = useInstitutionStore((s) => s.selectedInstitution);
@@ -799,15 +670,15 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
       loan,
       hold,
     });
-    // Falls back to BOOK_WORK_TYPE until wokay answers Q-1b (journal/article
-    // @type values). Once they do, the normalizer fills publication.workType and
-    // nothing else here changes.
+    // See this file's header: an explicit route param (set by the journal
+    // drill-down) wins, then whatever the normalizer read off @type, then the
+    // book fallback.
     return buildItemDetail({
       publication,
-      workType: publication.workType ?? BOOK_WORK_TYPE,
+      workType: routeWorkType ?? publication.workType ?? BOOK_WORK_TYPE,
       access,
     });
-  }, [publication, institutionId, session, loan, hold]);
+  }, [publication, institutionId, session, loan, hold, routeWorkType]);
 
   // Hides the shared four-tab bar for exactly this screen — a detail page,
   // not one of Catalogue/Search/Library/Profile. `getParent()` reaches the
@@ -1071,7 +942,7 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
       pendingAction ?? (downloadProgress.status === 'downloading' ? 'download' : undefined);
     body =
       detail.workType === 'article'
-        ? renderArticleContent(detail, handleAction, effectivePending, licenceMessage)
+        ? renderArticleContent(detail, handleAction, effectivePending, licenceMessage, articleContext)
         : renderBookContent(
             detail,
             handleAction,
@@ -1145,8 +1016,8 @@ const styles = StyleSheet.create({
     paddingBottom: space.xl,
     gap: space.md,
   },
-  // Eyebrow, title, authors and date as one tight unit — xs against the md
-  // gaps between the sections below it.
+  // Title and authors as one tight unit — xs against the md gaps between the
+  // sections below it.
   articleHeader: {
     gap: space.xs,
   },
@@ -1171,6 +1042,27 @@ const styles = StyleSheet.create({
   coverPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+  },
+  titleColumn: {
+    flex: 1,
+    gap: space.xs,
+  },
+  // A small, secondary icon button — Share is not this page's main action,
+  // so it takes none of the visual weight the ActionBar's Read/Download get.
+  // Same shape as JournalScreen's own `shareIconButton`.
+  shareIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderColor: color.border,
   },
   // Aleo, tight tracking — the same treatment Catalogue's own book titles
   // (`cardTitle`) use, since a title is exactly that "editorial content" case
@@ -1200,11 +1092,15 @@ const styles = StyleSheet.create({
   byLineNames: {
     color: color.primary,
   },
-  // Screen 04's title and author line. Same tokens as `title`/`authors` above,
-  // minus the centring.
+  // Screen 04's title. A size step below the book's own `title` (22 vs 24) —
+  // an article title now has real content underneath it (journal context
+  // above, published date/badge/abstract/subjects below), so it no longer
+  // needs to be the single largest element carrying the whole page.
   articleTitle: {
-    fontSize: typeScale.pageTitle.size,
-    lineHeight: typeScale.pageTitle.lineHeight,
+    fontFamily: typeScale.cardTitle.fontFamily,
+    fontSize: 22,
+    lineHeight: 28,
+    letterSpacing: -0.2,
     color: color.textPrimary,
   },
   // PRIMARY, NOT `textPrimary`. The mockup sets the author line in its link
@@ -1258,38 +1154,6 @@ const styles = StyleSheet.create({
   metaRowText: {
     flex: 1,
   },
-  // "About this title" — a `SectionHeader` plus whichever body follows it,
-  // spaced as one unit against the `content` gap separating it from the
-  // metadata block above and whatever real section follows it.
-  sectionBlock: {
-    gap: space.xs,
-    marginTop: space.sm,
-  },
-  // No `numberOfLines` clamp baked in here — `DescriptionSection` applies
-  // one conditionally, only once a description is actually long enough to
-  // need it, so a short one-liner today reads exactly like plain body text.
-  description: {
-    alignSelf: 'stretch',
-    fontFamily: typeScale.body.fontFamily,
-    fontSize: typeScale.body.size,
-    lineHeight: typeScale.body.lineHeight,
-    color: color.textPrimary,
-  },
-  readMoreLabel: {
-    marginTop: space.xs,
-    fontFamily: typeScale.button.fontFamily,
-    fontSize: typeScale.button.size,
-    lineHeight: typeScale.button.lineHeight,
-    color: color.primary,
-  },
-  // The one honest fallback the description section can show — never
-  // rendered for a title that has a real (non-fixture) description.
-  descriptionUnavailable: {
-    fontFamily: typeScale.body.fontFamily,
-    fontSize: typeScale.body.size,
-    lineHeight: typeScale.body.lineHeight,
-    color: color.textSecondary,
-  },
   // Article-only. No `marginTop` any more: `articleContent`'s own `gap` spaces
   // it off the badge above, and the old margin stacked on top of that.
   abstractBlock: {
@@ -1303,9 +1167,6 @@ const styles = StyleSheet.create({
     lineHeight: typeScale.body.lineHeight,
     color: color.textPrimary,
   },
-  // Same box shape as `unavailableTag`, deliberately, so the two read as
-  // siblings — but full opacity and primary-coloured text, because this one
-  // is confirmed data rather than a gap.
   // Format and access tier, side by side — see the render's own comment for
   // why these two share a row instead of stacking.
   badgeRow: {
@@ -1331,56 +1192,76 @@ const styles = StyleSheet.create({
     lineHeight: typeScale.smallLabel.lineHeight,
     color: color.textPrimary,
   },
-  // Screen 04's shape: no border, no fill, no box — a row of muted text with an
-  // optional glyph, which is how its mockup draws both call sites. `alignSelf`
-  // keeps it to its content width against `articleContent`'s stretch default,
-  // the same line AccessTierBadge sets on itself for the same reason.
-  //
-  // Muted by colour alone, with NO `opacity`. The pill above can afford opacity
-  // because its border fades with it and the whole chip recedes together; here
-  // there is nothing but text, and dimming 12pt text a second time after it is
-  // already on the secondary colour puts it under AA on white.
-  unavailableInline: {
+  // Subjects — a wrapping row of static pills (real data, not a control; see
+  // SubjectsRow's own header comment for why this isn't the interactive
+  // `SubjectChip`). Outlined in the primary colour, matching `SubjectChip`'s
+  // own unselected look so a reader who has seen subjects elsewhere in the
+  // app recognises the shape, without borrowing a component built for a
+  // press this row does not have.
+  subjectsRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: space.sm,
+  },
+  subjectChip: {
     alignSelf: 'flex-start',
-    gap: space.xs,
+    paddingVertical: space.xs,
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderColor: color.primary,
   },
-  unavailableInlineLabel: {
-    fontSize: typeScale.smallLabel.size,
-    lineHeight: typeScale.smallLabel.lineHeight,
-    color: color.textSecondary,
-  },
-  // Plain text and a divider, matching the mockup's own tab strip shape —
-  // deliberately not chips. See the header comment on `InertTabRow`.
-  tabRow: {
-    alignSelf: 'stretch',
-  },
-  // No `flexWrap`: this is the horizontal ScrollView's content container now, so
-  // the row runs off the edge and scrolls rather than folding onto a second line.
-  tabRowLabels: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-  },
-  // Secondary colour throughout, on every label — no active one, no accent, no
-  // underline. See `InertTabRow`'s header comment for why marking one active
-  // would overclaim.
-  //
-  // `smallLabel`, down from `button`. Regular weight at 12pt is what fits all
-  // five on the mockup's single line; it is also the honest weight here, since
-  // the mockup's bold is reserved for the active tab and this row has none.
-  tabRowLabel: {
+  subjectChipLabel: {
     fontFamily: typeScale.smallLabel.fontFamily,
     fontSize: typeScale.smallLabel.size,
     lineHeight: typeScale.smallLabel.lineHeight,
+    color: color.primary,
+  },
+  // Same border/radius/tint language as JournalScreen's own "Browse this
+  // journal" card, so this reads as part of the same journal feature rather
+  // than a one-off box invented for this screen.
+  publishedInCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+    padding: space.md,
+    borderRadius: radius.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.border,
+    backgroundColor: color.surface,
+  },
+  publishedInText: {
+    flex: 1,
+    gap: 2,
+  },
+  publishedInLabel: {
+    ...typeScale.smallLabel,
     color: color.textSecondary,
   },
-  tabRowDivider: {
-    alignSelf: 'stretch',
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: color.border,
-    marginTop: space.sm,
+  publishedInJournal: {
+    ...typeScale.body,
+    fontWeight: '700',
+    color: color.textPrimary,
+  },
+  publishedInIssue: {
+    ...typeScale.cardMeta,
+    color: color.textSecondary,
+  },
+  // Separates the journal-identity half of the card from the article-
+  // specific facts half, when both are present — a hairline rather than
+  // extra whitespace alone, so the two feel like distinct groups of facts
+  // rather than one run-on list.
+  publishedInDivider: {
+    marginTop: space.xs,
+    paddingTop: space.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.border,
+    gap: 2,
+  },
+  // No journal context to divide from — e.g. an article reached outside the
+  // journal drill-down that still carries a published date/page count.
+  publishedInNoDivider: {
+    gap: 2,
   },
   // Sits between the scroll and the action bar — above the tap target, visible
   // without scrolling, so the reader does not wonder why the button did nothing.

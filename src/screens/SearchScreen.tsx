@@ -419,9 +419,7 @@ export default function SearchScreen() {
           )}
         </View>
 
-        <Text testID="search-helper" style={styles.helper}>
-          {HELPER}
-        </Text>
+        
       </View>
 
       {/* The outside-tap dismiss for the dropdown above — a transparent
@@ -956,7 +954,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: space.sm,
+    // `md` on top of `results`' own `sm` gap totals `lg` — matching the gap
+    // ShelfScreen's heading has before its own row of cards.
+    marginBottom: space.md,
   },
   resultsCount: {
     fontFamily: type.meta.fontFamily,

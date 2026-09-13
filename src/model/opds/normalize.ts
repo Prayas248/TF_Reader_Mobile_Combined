@@ -19,11 +19,12 @@ import type {
   Publication,
   SearchFeed,
   Shelf,
+  WorkFeed,
   WorkType,
 } from '@model/types';
 import { ACCESS_TIERS } from '@model/types';
 import { CatalogueError, CatalogueFailure } from '@model/errors';
-import { idFromHref, isShelfHref, toActionId, toAlgorithm, toContentFormat } from '@model/opds/rels';
+import { idFromHref, isShelfHref, isWorksHref, toActionId, toAlgorithm, toContentFormat } from '@model/opds/rels';
 
 type Json = Record<string, unknown>;
 
@@ -329,13 +330,62 @@ export function normalizeShelf(doc: unknown): Shelf {
 function toNavLink(doc: unknown): NavLink {
   const entry = asRecord(doc, 'navigation entry');
   const href = reqString(entry.href, 'navigation href');
+  const works = isWorksHref(href);
+  const { coverUrl } = entry.images !== undefined ? toImages(entry.images) : {};
   return {
     title: reqString(entry.title, 'navigation title'),
     href,
     // Precomputed so a nav tap goes straight to getShelf() without any screen
     // needing to parse a URL.
     shelfId: idFromHref(href),
-    target: isShelfHref(href) ? 'shelf' : 'catalogue',
+    target: works ? 'works' : isShelfHref(href) ? 'shelf' : 'catalogue',
+    ...(works ? { workId: idFromHref(href) } : {}),
+    ...(coverUrl !== undefined ? { coverUrl } : {}),
+  };
+}
+
+export function normalizeWorkFeed(doc: unknown): WorkFeed {
+  const feed = asRecord(doc, 'work feed');
+  const metadata = asRecord(feed.metadata, 'work feed metadata');
+  const title = reqString(metadata.title, 'work feed title');
+
+  // Cover image: check metadata.images first (OPDS 2.0 spec placement), then
+  // top-level feed.images (some implementations hoist it). Silently absent when
+  // neither is present — JournalScreen falls back to its placeholder.
+  const imageSource = metadata.images ?? feed.images;
+  const { coverUrl } = imageSource !== undefined ? toImages(imageSource) : {};
+  const cover = coverUrl !== undefined ? { coverUrl } : {};
+
+  if (feed.publications !== undefined) {
+    const articles = asArray(feed.publications, 'work feed publications').map(normalizePublication);
+    return { kind: 'publications', title, ...cover, articles };
+  }
+
+  const children =
+    feed.navigation !== undefined
+      ? asArray(feed.navigation, 'work feed navigation').map(toNavLink)
+      : [];
+  // Journal-level metadata — optional, unconfirmed by wokay's contract. Same
+  // optional-parse shape as normalizePublication's own publisher/description/
+  // subjects/language above; absent here means JournalScreen renders no
+  // section for it, not a placeholder.
+  const publisher = metadata.publisher !== undefined
+    ? optString(asRecord(metadata.publisher, 'work feed publisher').name)
+    : undefined;
+  const subjects = toNames(metadata.subject);
+  return {
+    kind: 'navigation',
+    title,
+    ...cover,
+    ...(optString(metadata.description) !== undefined
+      ? { description: optString(metadata.description) as string }
+      : {}),
+    ...(subjects.length > 0 ? { subjects } : {}),
+    ...(publisher !== undefined ? { publisher } : {}),
+    ...(optString(metadata.language) !== undefined
+      ? { language: optString(metadata.language) as string }
+      : {}),
+    children,
   };
 }
 

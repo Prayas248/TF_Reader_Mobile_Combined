@@ -68,6 +68,7 @@ function fakeSource(
     getInstitutions,
     getInstitution: getInstitution ?? unused,
     getItemsBatch: unused,
+    getWork: unused,
   };
 }
 

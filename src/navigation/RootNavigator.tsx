@@ -28,6 +28,9 @@ import InstitutionDetailScreen from '../screens/InstitutionDetailScreen';
 import InstitutionListScreen from '../screens/InstitutionListScreen';
 import ItemDetailScreen from '../screens/ItemDetailScreen';
 import ShelfScreen from '../screens/ShelfScreen';
+import JournalScreen from '../screens/JournalScreen';
+import JournalVolumesScreen from '../screens/JournalVolumesScreen';
+import JournalIssueScreen from '../screens/JournalIssueScreen';
 import SignInScreen from '../screens/SignInScreen';
 import AccessGateScreen from '../screens/AccessGateScreen';
 import SignInMethodScreen from '../screens/SignInMethodScreen';
@@ -274,6 +277,21 @@ function CatalogueNavigator() {
         name="Shelf"
         component={ShelfScreen}
         options={({ route }) => ({ title: route.params.title })}
+      />
+      <CatalogueStack.Screen
+        name="Journal"
+        component={JournalScreen}
+        options={({ route }) => ({ title: route.params.title })}
+      />
+      <CatalogueStack.Screen
+        name="JournalVolumes"
+        component={JournalVolumesScreen}
+        options={{ title: 'Volumes & Issues' }}
+      />
+      <CatalogueStack.Screen
+        name="JournalIssue"
+        component={JournalIssueScreen}
+        options={({ route }) => ({ title: route.params.issueTitle })}
       />
       {/* 'fade', not 'slide_from_bottom' — the sheet's navy backdrop is part of
           this screen, so a slide animation would translate the backdrop along

@@ -43,6 +43,26 @@
 // WHAT WOULD CHANGE THIS: the team revisiting the item-detail-only decision. The
 // second reason would still stand on its own until this screen gains an
 // institution, or flambeau grows a way to queue anonymously.
+//
+// ─── NO JOURNALS HERE, AND IT IS A REAL BACKEND GAP, NOT A TODO ─────────────
+//
+// CatalogueScreen.tsx (the institution-selected screen) has a "Journals"
+// section, built from that institution's own `getHomeCatalogue()` navigation
+// entries and browsed with `getWork(institutionId, workId)`. Neither has a
+// no-institution counterpart: `getPublicFeed()` (what THIS screen calls)
+// returns a `Shelf` — a flat publications list with no `navigation` field at
+// all — and `CatalogueSource`'s interface has no `getPublicWork`. wokay's
+// contract has never published a "list every public journal" endpoint or a
+// way to fetch a journal/volume/issue feed without an institution id (the
+// real endpoint is literally `/opds/v1/institutions/{id}/works/{workId}`).
+//
+// A client-side workaround was considered — fetch every known institution's
+// catalogue and merge their journal entries into one list — and rejected: it
+// does not scale (N full catalogue fetches for one preview section, against
+// however many institutions the real backend has, not the two dev fixtures),
+// and the same journal held by several institutions would show up once per
+// institution rather than once. This needs a real backend capability (a
+// public journals list, and a public work-fetch), not a screen change.
 import { useCallback, useEffect, useState } from 'react';
 import {
   Pressable,

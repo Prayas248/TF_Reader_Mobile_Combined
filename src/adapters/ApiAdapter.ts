@@ -24,11 +24,11 @@
 // fresh — the same behaviour as before this existed, just with a chance to
 // skip the download on a warm one.
 import type { BookId } from '@/shared/types/primitives';
-import type { BatchItemsResult, Catalogue, Publication, Shelf } from '@model/types';
+import type { BatchItemsResult, Catalogue, Publication, Shelf, WorkFeed } from '@model/types';
 import type { DataSource, InstitutionQueryParams } from '@adapters/InstitutionSource';
 import type { ShelfQuery } from '@adapters/CatalogueSource';
 import { CatalogueError, CatalogueFailure, isCatalogueFailure } from '@model/errors';
-import { normalizeCatalogue, normalizePublication, normalizeShelf } from '@model/opds/normalize';
+import { normalizeCatalogue, normalizePublication, normalizeShelf, normalizeWorkFeed } from '@model/opds/normalize';
 import { MAX_BATCH_IDS, normalizeBatchItemsResponse } from '@model/batchItems';
 import {
   type Institution,
@@ -362,6 +362,13 @@ export class ApiAdapter implements DataSource {
     const headers = await this.authenticatedHeaders({ 'Content-Type': 'application/json' });
     const body = await this.postJson(url, 'items:batch', { ids }, headers);
     return normalizeBatchItemsResponse(body);
+  }
+
+  async getWork(institutionId: string, workId: string): Promise<WorkFeed> {
+    const url = `${this.institutionPath(institutionId)}/works/${encodeURIComponent(workId)}`;
+    const headers = await this.authenticatedHeaders();
+    const body = await this.getJson(url, workId, headers);
+    return normalizeWorkFeed(body);
   }
 
   // Ids are percent-encoded on the way into the path. Without this, an id
