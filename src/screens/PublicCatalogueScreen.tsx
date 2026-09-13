@@ -1,9 +1,15 @@
 // A1 (Prayas) — the catalogue a reader sees before choosing an institution.
 //
 // A FLAT LIST, NOT A HOME SCREEN. Curated shelves are configured per institution
-// and this reader has none, so there is no category strip and no section heading
-// here — one list of open access titles and nothing else. That absence is the
-// feature, not an unfinished screen.
+// and this reader has none, so there is no category strip — one list of open
+// access titles, named by a single fixed SectionHeader, with the sheet's
+// Filter & Sort action pinned to that heading's own trailing slot (the same
+// slot ShelfScreen's shelf-title heading uses in task 3) rather than a second,
+// separate button elsewhere on the screen.
+//
+// FILTER & SORT ARE CLIENT-SIDE ONLY HERE. `getPublicFeed` takes no query
+// params (unlike `getShelf`'s `ShelfQuery`) — see `applyBrowseFilters`'s own
+// header for what that means for "Load more".
 //
 // The feed is fetched with no institution id and no token (getPublicFeed), so
 // nothing on this screen may reach for `institutionStore`.
@@ -58,7 +64,14 @@
 // institution rather than once. This needs a real backend capability (a
 // public journals list, and a public work-fetch), not a screen change.
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -66,13 +79,17 @@ import EmptyState from '@/components/EmptyState';
 import OfflineBanner from '@/components/OfflineBanner';
 import { isNotEntitled, resolveAccess } from '@access/resolveAccess';
 import { AccessTierBadge } from '@components/AccessTierBadge';
-import { ContentCard } from '../components/ContentCard';
+import { ContentCard, COVER_TILE_WIDTH } from '../components/ContentCard';
 import { ErrorState } from '@components/ErrorState';
+import { FilterSortButton } from '@components/FilterSortButton';
+import { FilterSortSheet } from '@components/FilterSortSheet';
+import { SectionHeader } from '@components/SectionHeader';
 import { getCatalogueSource } from '../config/catalogue';
 import { type CatalogueError, isCatalogueFailure } from '@model/errors';
 import { CATALOGUE_ERROR_COPY, catalogueErrorVariant } from '@model/errorCopy';
-import type { Publication } from '../model/types';
+import type { Publication, SortOrder } from '../model/types';
 import type { CatalogueStackParamList } from '../navigation/types';
+import type { BrowseFilters } from '@search/browseLink';
 import { PUBLIC_FEED, useFeedScrollMemory } from '@hooks/useFeedScrollMemory';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { color, space, type as typeScale } from '../theme/tokens';
@@ -93,8 +110,72 @@ function moreLabelFor(status: MoreStatus): string {
   return 'Load more';
 }
 
+// Two-up grid rows for the cover tiles below. A trailing single item renders
+// alone rather than being padded with an invisible placeholder — each tile
+// carries its own explicit width regardless of how many share its row.
+function chunkPairs<T>(items: T[]): T[][] {
+  const pairs: T[][] = [];
+  for (let i = 0; i < items.length; i += 2) {
+    pairs.push(items.slice(i, i + 2));
+  }
+  return pairs;
+}
+
+// Client-side only — `getPublicFeed` takes no filter/sort query params
+// (unlike `getShelf`'s `ShelfQuery`), so there is no server request to carry
+// these. This filters/sorts whatever pages are ALREADY loaded, the same
+// fields and comparators `MockAdapter`'s own `matchesShelfQuery`/
+// `sortByShelfQuery` use server-side for the 'all' shelf. A real limitation,
+// not hidden: "Load more" still fetches the next unfiltered page underneath,
+// so narrowing the filter can reveal fewer rows than the feed actually has
+// until more pages are pulled in.
+function applyBrowseFilters(
+  publications: Publication[],
+  filters: BrowseFilters,
+  sort: SortOrder | undefined,
+): Publication[] {
+  const filtered = publications.filter((publication) => {
+    if (filters.contentType !== undefined && publication.format !== filters.contentType) {
+      return false;
+    }
+    if (
+      filters.accessTier !== undefined &&
+      publication.acquisition.licenceModel !== filters.accessTier
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  if (sort === undefined) return filtered;
+
+  const sorted = [...filtered];
+  if (sort === 'title.asc') sorted.sort((a, b) => a.title.localeCompare(b.title));
+  if (sort === 'title.desc') sorted.sort((a, b) => b.title.localeCompare(a.title));
+  if (sort === 'publishedAt.asc') {
+    sorted.sort((a, b) => (a.published ?? '').localeCompare(b.published ?? ''));
+  }
+  if (sort === 'publishedAt.desc') {
+    sorted.sort((a, b) => (b.published ?? '').localeCompare(a.published ?? ''));
+  }
+  return sorted;
+}
+
 export default function PublicCatalogueScreen() {
   const navigation = useNavigation<Nav>();
+
+  // Matches `COVER_TILE_WIDTH` — the same width CatalogueScreen's carousel
+  // and ShelfScreen's grid use — whenever the screen is wide enough for two
+  // of them plus the row's own gap. Below that, this is the fallback that
+  // keeps two tiles from overflowing the row on a narrow phone; the cover
+  // image's aspect ratio is never touched either way (ContentCard sets no
+  // ratio override), so a tile only ever shrinks by getting narrower, not by
+  // cropping.
+  const { width: windowWidth } = useWindowDimensions();
+  const columnWidth = Math.min(
+    COVER_TILE_WIDTH,
+    (windowWidth - space.md * 2 - space.sm) / 2,
+  );
 
   const [publications, setPublications] = useState<Publication[]>([]);
   // The cursor, taken off the response's own `next` link. `undefined` means
@@ -104,6 +185,16 @@ export default function PublicCatalogueScreen() {
   const [failed, setFailed] = useState(false);
   const [errorCode, setErrorCode] = useState<CatalogueError | undefined>(undefined);
   const [moreStatus, setMoreStatus] = useState<MoreStatus>('idle');
+
+  // Filter & sort — see `applyBrowseFilters`'s own header for why this is
+  // client-side only. APPLIED is what's currently narrowing the list; DRAFT
+  // is what the sheet shows while the reader is still choosing, the same
+  // draft/applied split ShelfScreen's sheet uses.
+  const [appliedFilters, setAppliedFilters] = useState<BrowseFilters>({});
+  const [appliedSort, setAppliedSort] = useState<SortOrder | undefined>(undefined);
+  const [draftFilters, setDraftFilters] = useState<BrowseFilters>({});
+  const [draftSort, setDraftSort] = useState<SortOrder | undefined>(undefined);
+  const [sheetVisible, setSheetVisible] = useState(false);
 
   const isOnline = useNetworkStatus();
 
@@ -139,6 +230,28 @@ export default function PublicCatalogueScreen() {
     setFailed(false);
     fetchFirstPage();
   }, [fetchFirstPage]);
+
+  const openSheet = useCallback(() => {
+    // The sheet always opens showing what is actually applied, never a stale
+    // draft left over from a previous open-then-dismiss.
+    setDraftFilters(appliedFilters);
+    setDraftSort(appliedSort);
+    setSheetVisible(true);
+  }, [appliedFilters, appliedSort]);
+
+  const applyFilters = useCallback(() => {
+    setSheetVisible(false);
+    setAppliedFilters(draftFilters);
+    setAppliedSort(draftSort);
+  }, [draftFilters, draftSort]);
+
+  const clearAllFilters = useCallback(() => {
+    setDraftFilters({});
+    setDraftSort(undefined);
+    setSheetVisible(false);
+    setAppliedFilters({});
+    setAppliedSort(undefined);
+  }, []);
 
   const loadMore = useCallback(() => {
     // A guard, not an assertion: the button is hidden with no next page and
@@ -179,7 +292,11 @@ export default function PublicCatalogueScreen() {
     );
   }
 
-  const isEmpty = !loading && publications.length === 0;
+  const visiblePublications = applyBrowseFilters(publications, appliedFilters, appliedSort);
+  const isEmpty = !loading && visiblePublications.length === 0;
+  const hasActiveFilter =
+    appliedSort !== undefined ||
+    Object.values(appliedFilters).some((value) => value !== undefined);
   const moreLabel = moreLabelFor(moreStatus);
 
   return (
@@ -195,46 +312,74 @@ export default function PublicCatalogueScreen() {
         style={styles.screen}
         contentContainerStyle={styles.content}
       >
+        <SectionHeader
+          title="Open Access Titles"
+          emphasis="editorial"
+          action={<FilterSortButton onPress={openSheet} accessibilityLabel="Filter & Sort Open Access Titles" />}
+        />
+
         {loading &&
-          Array.from({ length: SKELETON_COUNT }, (_, index) => (
-            <ContentCard key={index} state="loading" title="" />
-          ))}
+          chunkPairs(Array.from({ length: SKELETON_COUNT }, (_, index) => index)).map(
+            (pair, rowIndex) => (
+              <View key={rowIndex} style={styles.gridRow}>
+                {pair.map((index) => (
+                  <View key={index} style={{ width: columnWidth }}>
+                    <ContentCard variant="cover" state="loading" title="" />
+                  </View>
+                ))}
+              </View>
+            ),
+          )}
 
-        {/* Nothing open access at all. Not an error, so no Retry — see the
-            EmptyState test. */}
-        {isEmpty && <EmptyState variant="no_content" />}
+        {/* Nothing open access at all — or nothing matches the active
+            filter (B10's "your filters matched nothing" vs "this list is
+            empty" distinction, same as ShelfScreen). Not an error, so no
+            Retry — see the EmptyState test. */}
+        {isEmpty && (
+          <EmptyState
+            variant={hasActiveFilter ? 'no_filter_results' : 'no_content'}
+            onClearFilters={clearAllFilters}
+          />
+        )}
 
-        {publications.map((publication) => {
-          // Resolved once rather than inline in the badge, so D8 can ask about
-          // the state before anything reads the tier.
-          const access = resolveAccess({
-            item: publication,
-            institutionId: null,
-            session: null,
-          });
+        {chunkPairs(visiblePublications).map((pair, rowIndex) => (
+          <View key={rowIndex} style={styles.gridRow}>
+            {pair.map((publication) => {
+              // Resolved once rather than inline in the badge, so D8 can ask
+              // about the state before anything reads the tier.
+              const access = resolveAccess({
+                item: publication,
+                institutionId: null,
+                session: null,
+              });
 
-          return (
-            <ContentCard
-              key={publication.id}
-              title={publication.title}
-              publisher={publication.publisher}
-              imageUrl={publication.coverUrl}
-              format={publication.format}
-              // D8 — `not_entitled` renders nothing at all, badge included. The
-              // tier is an OPEN_ACCESS filler in that state, which on THIS
-              // screen would be doubly misleading: a list of open access titles
-              // is exactly where a false "Open Access" chip would go unnoticed.
-              badge={
-                isNotEntitled(access) ? undefined : <AccessTierBadge tier={access.tier} />
-              }
-              // No `action` — D12 is audited and excluded here. See the file
-              // header for why: with no institution there is no session, so
-              // resolveAccess answers `requires_signin` for every licensed tier
-              // and the queue is unreachable by construction.
-              onPress={() => navigation.navigate('ItemDetail', { itemId: publication.id })}
-            />
-          );
-        })}
+              return (
+                <View key={publication.id} style={{ width: columnWidth }}>
+                  <ContentCard
+                    variant="cover"
+                    title={publication.title}
+                    publisher={publication.publisher}
+                    imageUrl={publication.coverUrl}
+                    format={publication.format}
+                    // D8 — `not_entitled` renders nothing at all, badge
+                    // included. The tier is an OPEN_ACCESS filler in that
+                    // state, which on THIS screen would be doubly
+                    // misleading: a list of open access titles is exactly
+                    // where a false "Open Access" chip would go unnoticed.
+                    badge={
+                      isNotEntitled(access) ? undefined : (
+                        <AccessTierBadge tier={access.tier} />
+                      )
+                    }
+                    onPress={() =>
+                      navigation.navigate('ItemDetail', { itemId: publication.id })
+                    }
+                  />
+                </View>
+              );
+            })}
+          </View>
+        ))}
 
         {/* Absent, not disabled, on the last page: a permanently dead button
             reads as broken. */}
@@ -259,6 +404,26 @@ export default function PublicCatalogueScreen() {
           </Pressable>
         )}
       </ScrollView>
+
+      {/* Sort is not shelf-restricted here — there is no curated-shelf
+          "operator's order is the order" rule on this flat feed, so unlike
+          ShelfScreen's non-'all' shelves, sort is never greyed. */}
+      <FilterSortSheet
+        visible={sheetVisible}
+        onDismiss={() => setSheetVisible(false)}
+        contentType={draftFilters.contentType}
+        onSelectContentType={(contentType) =>
+          setDraftFilters((previous) => ({ ...previous, contentType }))
+        }
+        accessTier={draftFilters.accessTier}
+        onSelectAccessTier={(accessTier) =>
+          setDraftFilters((previous) => ({ ...previous, accessTier }))
+        }
+        sort={draftSort}
+        onSelectSort={setDraftSort}
+        onApply={applyFilters}
+        onClearAll={clearAllFilters}
+      />
     </View>
   );
 }
@@ -271,6 +436,17 @@ const styles = StyleSheet.create({
   content: {
     padding: space.md,
     gap: space.sm,
+  },
+  // Two cover tiles per row, each given an explicit `width` inline (the
+  // `columnWidth` computed above) rather than `flex: 1` — a flexible fill
+  // would size each tile off THIS row's own width, which is exactly what
+  // made it differ from CatalogueScreen's carousel tiles. `space-between`
+  // keeps the pair pinned to the row's outer edges instead of packing left
+  // with a gap of dead space on the right once both are the same fixed
+  // width as the carousel's.
+  gridRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
   center: {
     flex: 1,

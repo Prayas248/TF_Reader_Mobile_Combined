@@ -12,7 +12,7 @@
 //
 // `await render(...)` is required — RTL 14's render is async. See
 // ContentCard.test.tsx for why forgetting it fails silently.
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import type { DataSource } from '@adapters/InstitutionSource';
 import { setCatalogueSource } from '@config/catalogue';
@@ -572,6 +572,50 @@ describe('CatalogueScreen error', () => {
 
     await waitFor(() => expect(screen.getByText('Rights for Robots')).toBeTruthy());
     expect(attempt).toBe(2);
+  });
+
+  // A reader who just signed in must not see the earlier, now-stale
+  // "You need to sign in again" ErrorState (with its "Learn more" button)
+  // flash back up while the re-fetch it triggered is still in flight — see
+  // CatalogueScreen.tsx's own comment on why `fetchCatalogue` resets
+  // `loading`/`failed` synchronously rather than only on manual retry.
+  it('shows the loading state, not the stale sign-in-again error, while re-fetching after sign-in', async () => {
+    let resolveSecondFetch: (() => void) | undefined;
+    let attempt = 0;
+    setCatalogueSource(
+      fakeSource(async () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('401');
+        await new Promise<void>((resolve) => {
+          resolveSecondFetch = resolve;
+        });
+        return FAKE_CATALOGUE;
+      }),
+    );
+
+    await render(<CatalogueScreen institution={OTHER_INSTITUTION} />);
+    await waitFor(() => expect(screen.getByText(/couldn.?t load/i)).toBeTruthy());
+
+    await act(async () => {
+      useSessionStore.getState().setSession({
+        accessToken: 'tok_abc123',
+        expiresIn: 900,
+        userId: 'user_1',
+        institutionId: OTHER_INSTITUTION.id,
+        roles: [],
+        collections: [],
+      });
+    });
+
+    // The second fetch is deliberately held open here — this is the exact
+    // window where the bug showed the stale error instead of a loading state.
+    expect(screen.queryByText(/couldn.?t load/i)).toBeNull();
+    expect(screen.queryByLabelText('Learn more')).toBeNull();
+
+    await act(async () => {
+      resolveSecondFetch?.();
+    });
+    await waitFor(() => expect(screen.getByText('Rights for Robots')).toBeTruthy());
   });
 
   // A prior institution's failure must not survive a switch to one that works —

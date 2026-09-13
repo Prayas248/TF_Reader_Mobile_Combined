@@ -4,10 +4,14 @@
 // ("renders the shelfId so Prayas can verify navigation is wired"). The route is
 // `Shelf`, carrying `{ shelfId, title, institutionId }`.
 //
-// THE APP BAR OWNS THE TITLE. RootNavigator sets it from `route.params.title`,
-// so this screen renders no heading of its own — a SectionHeader here would
-// print the shelf name twice, once in the bar and once under it.
+// THE APP BAR ALSO OWNS THE TITLE, so a SectionHeader here prints the shelf
+// name a second time. That duplication is deliberate now, on explicit
+// instruction: the heading is where Filter & Sort's trailing action lives
+// (SectionHeader's own action slot), the same placement PublicCatalogueScreen
+// uses for its one fixed heading — so scrolling past the app bar still leaves
+// the filter reachable next to a label, not as a bare icon.
 //
+
 // Reached by tapping a CategoryCard on CatalogueScreen, which pushes
 // ShelfDetail with the tapped nav entry's `shelfId`. This screen fetches that
 // shelf on its own (getShelf) rather than receiving it as a route param: the
@@ -48,7 +52,14 @@
 // returns NOT_FOUND and the error state above renders. Nothing here is
 // shelf-specific; they will page the moment their fixtures land.
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type {
   NativeStackNavigationProp,
@@ -59,10 +70,12 @@ import { useCurrentSession, useIsSignedIn } from '@access/currentSession';
 import { isNotEntitled, resolveAccess } from '@access/resolveAccess';
 import { AccessTierBadge } from '@components/AccessTierBadge';
 import { EmptyState } from '@components/EmptyState';
-import { ContentCard } from '../components/ContentCard';
+import { ContentCard, COVER_TILE_WIDTH } from '../components/ContentCard';
 import { ErrorState } from '@components/ErrorState';
+import { FilterSortButton } from '@components/FilterSortButton';
 import { FilterSortSheet } from '@components/FilterSortSheet';
 import { OfflineBanner } from '@components/OfflineBanner';
+import { SectionHeader } from '@components/SectionHeader';
 import { getCatalogueSource } from '../config/catalogue';
 import { useNetworkStatus } from '@hooks/useNetworkStatus';
 import { type CatalogueError, isCatalogueFailure } from '@model/errors';
@@ -70,7 +83,7 @@ import { CATALOGUE_ERROR_COPY, catalogueErrorVariant } from '@model/errorCopy';
 import type { Publication, Shelf, SortOrder } from '../model/types';
 import type { CatalogueStackParamList } from '../navigation/types';
 import type { BrowseFilters } from '@search/browseLink';
-import { color, radius, space, type as typeScale } from '../theme/tokens';
+import { color, space, type as typeScale } from '../theme/tokens';
 
 type Nav = NativeStackNavigationProp<CatalogueStackParamList, 'Shelf'>;
 
@@ -84,9 +97,31 @@ type MoreStatus = 'idle' | 'loading' | 'failed';
 // there is no data yet to size it from.
 const SKELETON_COUNT = 3;
 
+// Two-up grid rows for the cover tiles below. A trailing single item renders
+// alone rather than being padded with an invisible placeholder — each tile
+// carries its own explicit width regardless of how many share its row.
+function chunkPairs<T>(items: T[]): T[][] {
+  const pairs: T[][] = [];
+  for (let i = 0; i < items.length; i += 2) {
+    pairs.push(items.slice(i, i + 2));
+  }
+  return pairs;
+}
+
 export default function ShelfScreen({ route }: Props) {
-  const { shelfId, institutionId } = route.params;
+  const { shelfId, institutionId, title } = route.params;
   const navigation = useNavigation<Nav>();
+
+  // Matches `COVER_TILE_WIDTH` — the same width CatalogueScreen's carousel
+  // and PublicCatalogueScreen's grid use — whenever the screen is wide
+  // enough for two of them plus the row's own gap. See that screen's own
+  // comment on this same computation for why the fallback exists and why
+  // the cover image's aspect ratio is never touched either way.
+  const { width: windowWidth } = useWindowDimensions();
+  const columnWidth = Math.min(
+    COVER_TILE_WIDTH,
+    (windowWidth - space.md * 2 - space.sm) / 2,
+  );
 
   // Null unless the reader has actually signed in — see currentSession.ts's
   // note on why this replaced handToggledSession.
@@ -284,25 +319,27 @@ export default function ShelfScreen({ route }: Props) {
 
   return (
     <View style={styles.screen}>
-      <Pressable
-        testID="shelf-filter-button"
-        onPress={openSheet}
-        style={styles.filterButton}
-        accessibilityRole="button"
-        accessibilityLabel="Filter and sort"
-      >
-        <Text style={styles.filterButtonLabel}>Filter & Sort</Text>
-      </Pressable>
-
       <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+        <SectionHeader
+          title={title}
+          emphasis="editorial"
+          action={<FilterSortButton onPress={openSheet} accessibilityLabel={`Filter & Sort ${title}`} />}
+        />
+
         {loading ? (
-          Array.from({ length: SKELETON_COUNT }, (_, index) => (
-            <ContentCard key={index} state="loading" title="" />
-          ))
+          chunkPairs(Array.from({ length: SKELETON_COUNT }, (_, index) => index)).map(
+            (pair, rowIndex) => (
+              <View key={rowIndex} style={styles.gridRow}>
+                {pair.map((index) => (
+                  <View key={index} style={{ width: columnWidth }}>
+                    <ContentCard variant="cover" state="loading" title="" />
+                  </View>
+                ))}
+              </View>
+            ),
+          )
         ) : (
           <View style={styles.section}>
-          {/* No heading here — the app bar already shows this shelf's name, set
-              by RootNavigator from route.params.title. */}
           {/* B10 — the shelf's own empty state, INSIDE the section rather than
               instead of it, so the "Showing 0 of 0" count below still renders. A
               reader who filtered to nothing needs both facts: that the filter
@@ -335,34 +372,47 @@ export default function ShelfScreen({ route }: Props) {
             />
           ) : (
           <View style={styles.list}>
-            {publications.map((publication) => {
-              // Hoisted out of the `badge` prop: D12 needs the resolved ACTIONS
-              // as well as the tier, and resolving twice per row would be two
-              // answers to one question.
-              const access = resolveAccess({
-                item: publication,
-                institutionId,
-                session,
-              });
-              return (
-                <ContentCard
-                  key={publication.id}
-                  title={publication.title}
-                  publisher={publication.publisher}
-                  imageUrl={publication.coverUrl}
-                  format={publication.format}
-                  // D8 — `not_entitled` renders nothing at all, badge
-                  // included: `tier` carries an OPEN_ACCESS filler in that
-                  // state, and drawing it would label an unopenable title free.
-                  badge={
-                    isNotEntitled(access) ? undefined : <AccessTierBadge tier={access.tier} />
-                  }
-                  // NO `action` PROP. D12's Elite queue affordance is
-                  // ItemDetailScreen only — confirmed team decision, 26 Aug.
-                  onPress={() => navigation.navigate('ItemDetail', { itemId: publication.id })}
-                />
-              );
-            })}
+            {chunkPairs(publications).map((pair, rowIndex) => (
+              <View key={rowIndex} style={styles.gridRow}>
+                {pair.map((publication) => {
+                  // Hoisted out of the `badge` prop: D12 needs the resolved
+                  // ACTIONS as well as the tier, and resolving twice per row
+                  // would be two answers to one question.
+                  const access = resolveAccess({
+                    item: publication,
+                    institutionId,
+                    session,
+                  });
+                  return (
+                    <View key={publication.id} style={{ width: columnWidth }}>
+                      <ContentCard
+                        variant="cover"
+                        title={publication.title}
+                        publisher={publication.publisher}
+                        imageUrl={publication.coverUrl}
+                        format={publication.format}
+                        // D8 — `not_entitled` renders nothing at all, badge
+                        // included: `tier` carries an OPEN_ACCESS filler in
+                        // that state, and drawing it would label an
+                        // unopenable title free.
+                        badge={
+                          isNotEntitled(access) ? undefined : (
+                            <AccessTierBadge tier={access.tier} />
+                          )
+                        }
+                        // NO `action` PROP. D12's Elite queue affordance is
+                        // ItemDetailScreen only — confirmed team decision, 26
+                        // Aug. The cover variant has no action slot anyway
+                        // (see ContentCard's own header).
+                        onPress={() =>
+                          navigation.navigate('ItemDetail', { itemId: publication.id })
+                        }
+                      />
+                    </View>
+                  );
+                })}
+              </View>
+            ))}
           </View>
           )}
 
@@ -435,23 +485,6 @@ const styles = StyleSheet.create({
     padding: space.md,
     gap: space.lg,
   },
-  filterButton: {
-    alignSelf: 'flex-start',
-    marginHorizontal: space.md,
-    marginTop: space.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: color.border,
-  },
-  filterButtonLabel: {
-    fontWeight: typeScale.button.weight,
-    fontFamily: typeScale.button.fontFamily,
-    fontSize: typeScale.button.size,
-    lineHeight: typeScale.button.lineHeight,
-    color: color.textPrimary,
-  },
   center: {
     flex: 1,
     alignItems: 'center',
@@ -464,6 +497,15 @@ const styles = StyleSheet.create({
   },
   list: {
     gap: space.sm,
+  },
+  // Two cover tiles per row, each given an explicit `width` inline
+  // (`columnWidth`, computed above) rather than `flex: 1` — see
+  // PublicCatalogueScreen's identical comment for why a flexible fill would
+  // size this screen's tiles differently from CatalogueScreen's carousel.
+  // `space-between` keeps the pair pinned to the row's outer edges.
+  gridRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
   count: {
     alignSelf: 'center',

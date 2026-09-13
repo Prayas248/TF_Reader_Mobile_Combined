@@ -35,6 +35,7 @@ import SignInScreen from '../screens/SignInScreen';
 import AccessGateScreen from '../screens/AccessGateScreen';
 import SignInMethodScreen from '../screens/SignInMethodScreen';
 import PersonalAccountScreen from '../screens/PersonalAccountScreen';
+import StartupGateScreen from '../screens/StartupGateScreen';
 
 // Reader engine integration seam (integration_ref.md Phase 2.1) — the reader team's own route
 // screens, mounted directly into the Catalogue/Search stacks rather than a separate flat shell.
@@ -144,6 +145,31 @@ const TAB_ROOT_ROUTE_NAMES = new Set([
   'ProfileHome',
 ]);
 
+// EVERY PUSHED SCREEN'S HEADER NAMES WHERE "BACK" RETURNS TO, NOT ITSELF —
+// on explicit request, so the title beside the chevron reads the way a
+// native iOS back button does. This custom header has only one text slot
+// there (no separate back-label and centred current-title, the way a native
+// header splits them), so that slot has to pick one job, and this makes it
+// "where back goes" for every push. `back.title` is React Navigation's own
+// resolved title for whichever screen is actually underneath on THIS push.
+// `options.title` (each screen's own registered title, e.g. "Item Details"
+// or a route param like a book's title) is now only the fallback for the
+// one case `back` cannot cover: no previous screen in the stack — a tab
+// root, or a screen pushed directly onto the root stack with nothing under
+// it. `ItemDetail` used to be the one screen special-cased this way, because
+// it is reachable from several different screens and a fixed "Item
+// Details" label could not say which one "back" returns to — that
+// reasoning now applies uniformly rather than just to the one screen it was
+// first solved for.
+function pushedScreenHeaderTitle(
+  routeName: string,
+  options: NativeStackHeaderProps['options'],
+  back: NativeStackHeaderProps['back'],
+) {
+  if (back?.title !== undefined) return back.title;
+  return options.title ?? routeName;
+}
+
 function AppHeader({ route, options, back, navigation }: NativeStackHeaderProps) {
   const insets = useSafeAreaInsets();
   const selectedInstitution = useInstitutionStore((s) => s.selectedInstitution);
@@ -153,7 +179,7 @@ function AppHeader({ route, options, back, navigation }: NativeStackHeaderProps)
 
   return (
     <TopAppBar
-      title={options.title ?? route.name}
+      title={pushedScreenHeaderTitle(route.name, options, back)}
       onBack={back ? navigation.goBack : undefined}
       topInset={insets.top}
       action={
@@ -229,10 +255,13 @@ function CatalogueNavigator() {
         component={InstitutionDetailScreen}
         options={{ title: 'Institution' }}
       />
-      {/* ONE TITLE FOR EVERY WORK TYPE AND FORMAT — a book, a journal article
-          and an audiobook all push this same route, and 'Book Details' used
-          to stay on screen for an audiobook (only 'article' ever narrowed
-          it, to 'Article Details') even though nothing here is a book. See
+      {/* The header shows where "back" returns to, not this title — see
+          `pushedScreenHeaderTitle`'s own comment above. `title` here is only
+          the fallback for no previous screen, and it stays work-type-
+          agnostic on purpose: a book, a journal article and an audiobook all
+          push this same route, and 'Book Details' used to stay on screen for
+          an audiobook (only 'article' ever narrowed it, to 'Article
+          Details') even though nothing here is a book. See
           ItemDetailScreen.tsx's own header for the shared route reasoning. */}
       <CatalogueStack.Screen
         name="ItemDetail"
@@ -441,10 +470,11 @@ function ProfileNavigator() {
         component={ProfileScreen}
         options={{ title: 'Profile' }}
       />
-      {/* Pushed from the "Reading Preferences" row on screen 10. The title
-          matches that row's own label, so the header echoes the thing that was
-          tapped. `AppHeader` supplies the back chevron because this is a pushed
-          screen rather than a tab root. */}
+      {/* Pushed from the "Reading Preferences" row on screen 10. `title` here
+          is now only the no-back fallback — see `pushedScreenHeaderTitle`'s
+          own comment — since the header actually shown names "Profile", the
+          screen back returns to. `AppHeader` supplies the back chevron
+          because this is a pushed screen rather than a tab root. */}
       <ProfileStack.Screen
         name="ReaderPreferences"
         component={ReaderPreferencesScreen}
@@ -506,6 +536,7 @@ function TabNavigator() {
 export default function RootNavigator() {
   const hasHydrated = useInstitutionStore((s) => s._hasHydrated);
   const authReady = useSessionStore((s) => s._authReady);
+  const isAuthenticated = useSessionStore((s) => s.isAuthenticated);
 
   if (!hasHydrated || !authReady) {
     return <View style={styles.splash} />;
@@ -513,8 +544,29 @@ export default function RootNavigator() {
 
   return (
     <View style={styles.root}>
-      <RootStack.Navigator screenOptions={{ headerShown: false }}>
+      {/* `initialRouteName` here, NOT an imperative `navigate()` call from
+          App.tsx — this line only runs once, at the exact moment
+          RootStack.Navigator itself first mounts (which is exactly when
+          hasHydrated/authReady flip true), so there is no ref/"is the
+          navigator ready yet" race to lose. An earlier version tried the
+          imperative route from a `navigationRef` in App.tsx and it could
+          silently no-op if `navigate()` fired before the navigator had
+          finished registering with the container. */}
+      <RootStack.Navigator
+        screenOptions={{ headerShown: false }}
+        initialRouteName={isAuthenticated ? 'Main' : 'StartupGate'}
+      >
         <RootStack.Screen name="Main" component={TabNavigator} />
+        {/* Raised once per cold start, right after splash, when nobody is
+            signed in — see StartupGateScreen's own header. 'fade', not
+            'slide_from_bottom', for the same reason AccessGate/SignIn use it:
+            the sheet's navy backdrop is part of this screen, and it slides up
+            on its own via its Animated.View. */}
+        <RootStack.Screen
+          name="StartupGate"
+          component={StartupGateScreen}
+          options={{ presentation: 'transparentModal', animation: 'fade', headerShown: false }}
+        />
         <RootStack.Screen
           name="Gallery"
           component={GalleryScreen}

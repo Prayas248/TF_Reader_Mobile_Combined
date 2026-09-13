@@ -222,9 +222,6 @@ describe('ShelfScreen with data', () => {
     expect(getShelf.mock.calls[1][0]).toBe('inst_a21');
   });
 
-  // The shelf's NAME is not asserted here: RootNavigator puts it in the app bar
-  // from route.params.title, which is outside this component. Rendering it again
-  // inside the screen would print it twice on device.
   it('renders the publications the shelf carries', async () => {
     setCatalogueSource(fakeSource(async () => FAKE_SHELF));
 
@@ -522,7 +519,7 @@ describe('ShelfScreen filter & sort', () => {
     await render(<ShelfScreen {...routeProps} />);
 
     await waitFor(() => expect(screen.getByText('Rights for Robots')).toBeTruthy());
-    fireEvent.press(screen.getByLabelText('Filter and sort'));
+    fireEvent.press(screen.getByLabelText('Filter & Sort eBooks'));
 
     await waitFor(() => expect(screen.getByLabelText('Newest')).toBeTruthy());
     expect(screen.getByTestId('filter-sort-sheet-sort-note')).toBeTruthy();
@@ -539,7 +536,7 @@ describe('ShelfScreen filter & sort', () => {
     await render(<ShelfScreen {...routeProps} />);
 
     await waitFor(() => expect(screen.getByText('Rights for Robots')).toBeTruthy());
-    await fireEvent.press(screen.getByLabelText('Filter and sort'));
+    await fireEvent.press(screen.getByLabelText('Filter & Sort eBooks'));
     await waitFor(() => expect(screen.getByLabelText('Audiobooks')).toBeTruthy());
 
     await fireEvent.press(screen.getByLabelText('Audiobooks'));
@@ -559,7 +556,7 @@ describe('ShelfScreen filter & sort', () => {
     await render(<ShelfScreen {...routeProps} />);
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Load more' })).toBeTruthy());
-    await fireEvent.press(screen.getByLabelText('Filter and sort'));
+    await fireEvent.press(screen.getByLabelText('Filter & Sort eBooks'));
     await waitFor(() => expect(screen.getByLabelText('PDF')).toBeTruthy());
     await fireEvent.press(screen.getByLabelText('PDF'));
     await fireEvent.press(screen.getByTestId('filter-sort-sheet-apply'));
@@ -581,14 +578,14 @@ describe('ShelfScreen filter & sort', () => {
     await render(<ShelfScreen {...routeProps} />);
 
     await waitFor(() => expect(screen.getByText('Rights for Robots')).toBeTruthy());
-    await fireEvent.press(screen.getByLabelText('Filter and sort'));
+    await fireEvent.press(screen.getByLabelText('Filter & Sort eBooks'));
     await waitFor(() => expect(screen.getByLabelText('Audiobooks')).toBeTruthy());
     await fireEvent.press(screen.getByLabelText('Audiobooks'));
     await fireEvent.press(screen.getByTestId('filter-sort-sheet-apply'));
     await waitFor(() => expect(getShelf).toHaveBeenCalledTimes(2));
 
-    await waitFor(() => expect(screen.getByLabelText('Filter and sort')).toBeTruthy());
-    await fireEvent.press(screen.getByLabelText('Filter and sort'));
+    await waitFor(() => expect(screen.getByLabelText('Filter & Sort eBooks')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Filter & Sort eBooks'));
     await waitFor(() => expect(screen.getByTestId('filter-sort-sheet-clear')).toBeTruthy());
     await fireEvent.press(screen.getByTestId('filter-sort-sheet-clear'));
 
@@ -735,7 +732,7 @@ describe('ShelfScreen — B10 empty state', () => {
     await render(<ShelfScreen {...routeProps} />);
     await waitFor(() => expect(screen.getByText('Nothing to show here yet.')).toBeTruthy());
 
-    await fireEvent.press(screen.getByLabelText('Filter and sort'));
+    await fireEvent.press(screen.getByLabelText('Filter & Sort eBooks'));
     await waitFor(() => expect(screen.getByLabelText('Audiobooks')).toBeTruthy());
     await fireEvent.press(screen.getByLabelText('Audiobooks'));
     await fireEvent.press(screen.getByTestId('filter-sort-sheet-apply'));

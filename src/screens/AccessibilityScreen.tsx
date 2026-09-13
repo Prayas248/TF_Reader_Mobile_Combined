@@ -297,6 +297,15 @@ export default function AccessibilityScreen({ prefsSource }: AccessibilityScreen
 
         {/* ── Screen reader hints (top level, not a sub-block) ────────────── */}
         <View style={styles.group} testID="accessibility-hints-group">
+          {/* The one group on this screen that used to open straight into its
+              row — Text/Display/Announce above all open with their own
+              `SectionHeader`, so this card's "heading" was really just
+              `ListRow`'s own 15px title, a size smaller than every other
+              card's 18px heading. This brings it in line. */}
+          <SectionHeader
+            title="Screen reader hints"
+            icon={<Ionicons name="bulb-outline" size={SECTION_ICON_SIZE} color={color.primary} />}
+          />
           {/* THE LIMIT IS IN THE COPY, NOT ONLY IN THE CONTRACT — §2.5. The flag
               reaches native controls only and cannot touch EPUB content inside
               the WebView, whose accessibility tree comes from the DOM. Wording
@@ -366,7 +375,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: space.md,
-    paddingBottom: space.lg,
+    paddingBottom: space.xl,
     gap: space.lg,
   },
   skeletonGroup: {
@@ -393,8 +402,14 @@ const styles = StyleSheet.create({
   // NESTED (no border of its own) inside an already-carded `group` (Reduce
   // motion inside Display), or promoted to `standaloneControl` below when it
   // is its own top-level card (Text scale) — see each call site's own note.
+  // `marginTop`, on top of `group`'s own `sm` gap, brings the space above
+  // Reduce motion up to `lg` (24) — the same gap `content` puts between
+  // separate cards. Without it, Reduce motion read as just another row in
+  // the toggle list above it rather than the distinct control the mockup
+  // draws it as.
   control: {
     gap: space.sm,
+    marginTop: space.md,
   },
   standaloneControl: {
     gap: space.sm,
@@ -457,6 +472,12 @@ const styles = StyleSheet.create({
   },
   pageHeader: {
     gap: space.xs,
+    // Matches ProfileScreen's own `pageHeader` — without this, the gap under
+    // the title (just the `content` gap, 24) read as tighter than Profile's
+    // header-to-first-card gap (32, from this padding stacking with the
+    // section below it), even though both screens use the same `lg` gap
+    // between their own sections.
+    paddingBottom: space.sm,
   },
   pageHeaderStandalone: {
     paddingHorizontal: space.md,

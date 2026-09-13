@@ -32,7 +32,7 @@
 // that builds one, so a result and a "recently viewed" item cannot drift
 // into looking like two different things.
 import { useCallback, useMemo, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useNavigation, type CompositeNavigationProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -44,6 +44,7 @@ import { useCurrentSession } from '@access/currentSession';
 import type { CategoryAccent } from '@components/CategoryCard';
 import { ContentCard } from '@components/ContentCard';
 import { ErrorState } from '@components/ErrorState';
+import { FilterSortButton } from '@components/FilterSortButton';
 import { FilterSortSheet } from '@components/FilterSortSheet';
 import { SearchInput } from '@components/SearchInput';
 import { SectionHeader } from '@components/SectionHeader';
@@ -159,16 +160,48 @@ export default function SearchScreen() {
   const recentQueries = useRecentSearchesStore((s) => s.queries);
   const addRecentQuery = useRecentSearchesStore((s) => s.addQuery);
   const clearRecentQueries = useRecentSearchesStore((s) => s.clear);
+
+  // Whether the recent-searches/recently-viewed dropdown is showing. Driven by
+  // the field's own focus, bubbled up via SearchInput's onFocus/onBlur — this
+  // screen is the first caller that needs to know, so the state lives here
+  // rather than inside SearchInput.
+  const [dropdownVisible, setDropdownVisible] = useState(false);
+  const closeDropdown = useCallback(() => {
+    setDropdownVisible(false);
+    Keyboard.dismiss();
+  }, []);
+
+  // The input's own measured height, so the dropdown can anchor to a fixed
+  // pixel offset instead of `top: '100%'`. A percentage `top` on an
+  // absolutely-positioned child asks Yoga to resolve it against the
+  // parent's own height in the SAME layout pass that determines that
+  // height from its (non-absolute) content — on this RN version that
+  // measurably fed back into `fieldInputWrap`'s measured height, growing
+  // `field` and pushing everything below it (Recently viewed included)
+  // down while the dropdown was open. A measured pixel value has no such
+  // feedback loop.
+  const [inputHeight, setInputHeight] = useState(0);
+
+  // Narrowed to the draft as the reader types — same 5 queries the store
+  // already caps at, just filtered rather than swapped for a second list.
+  const filteredRecentQueries = useMemo(() => {
+    const draft = search.draft.trim().toLowerCase();
+    if (draft.length === 0) return recentQueries;
+    return recentQueries.filter((query) => query.toLowerCase().startsWith(draft));
+  }, [recentQueries, search.draft]);
+
   const onSubmit = useCallback(() => {
     addRecentQuery(search.draft);
     search.onSubmit();
-  }, [addRecentQuery, search]);
+    closeDropdown();
+  }, [addRecentQuery, search, closeDropdown]);
   const onSelectRecentQuery = useCallback(
     (query: string) => {
       search.onChangeQuery(query);
       search.onSubmit();
+      closeDropdown();
     },
-    [search],
+    [search, closeDropdown],
   );
 
   // Client-side only, same footing as recent searches — see
@@ -198,7 +231,8 @@ export default function SearchScreen() {
     addRecentQuery(transcript);
     search.onChangeQuery(transcript);
     search.onSubmit();
-  }, [voice, addRecentQuery, search]);
+    closeDropdown();
+  }, [voice, addRecentQuery, search, closeDropdown]);
 
   // Filter & sort sheet — same draft-then-Apply shape ShelfScreen uses.
   // `search.filters` already IS the applied value (it mirrors the reducer's
@@ -239,6 +273,17 @@ export default function SearchScreen() {
     (search.filters.contentType !== undefined ? 1 : 0) +
     (search.filters.accessTier !== undefined ? 1 : 0);
   const hasActiveFilter = activeFilterCount > 0;
+  const filterSortLabel = hasActiveFilter ? `Filter & Sort (${activeFilterCount})` : 'Filter & Sort';
+  // Filter & Sort rides beside whichever heading is actually on screen —
+  // "Recently viewed" at idle, the results count once a search has results —
+  // rather than a separate row of its own, the same trailing-heading slot
+  // PublicCatalogueScreen/ShelfScreen use. Neither heading is guaranteed to
+  // be on screen (loading, error, empty, or idle with nothing recently
+  // viewed), so this is the one fallback spot that keeps the trigger
+  // reachable in every other state.
+  const showRecentlyViewedHeader = state === 'idle' && recentlyViewed.length > 0;
+  const showResultsHeader = hasResults && search.totalItems !== undefined;
+  const showStandaloneFilterButton = !showRecentlyViewedHeader && !showResultsHeader;
   // A failure with results already on screen is a failed NEXT PAGE — the reader
   // keeps what they were reading and gets a retry where the page would have been.
   const pageFailed = state === 'error' && hasResults;
@@ -294,41 +339,119 @@ export default function SearchScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.field}>
-        <SearchInput
-          value={search.draft}
-          placeholder={PLACEHOLDER}
-          onChangeText={search.onChangeQuery}
-          onSubmit={onSubmit}
-          onClear={search.onClear}
-          // Screen 09 is catalogue search, so the mic belongs here. Screen 06
-          // (institution search) passes nothing and gets no mic.
-          //
-          // The press asks for the microphone permission and then opens it —
-          // see `useVoiceSearch`. Nothing about a recogniser reaches this file.
-          onVoicePress={voice.onMicPress}
-        />
+        {/* The anchor for the dropdown below — wraps ONLY the input, not the
+            helper line, so `top: '100%'` lands the dropdown flush against
+            the search card itself rather than below the helper text under
+            it. Its own `zIndex` keeps it (and the dropdown) painted above
+            the helper text, which follows it in the tree. */}
+        <View
+          style={styles.fieldInputWrap}
+          onLayout={(event) => setInputHeight(event.nativeEvent.layout.height)}
+        >
+          <SearchInput
+            value={search.draft}
+            placeholder={PLACEHOLDER}
+            onChangeText={search.onChangeQuery}
+            onSubmit={onSubmit}
+            onClear={search.onClear}
+            // Screen 09 is catalogue search, so the mic belongs here. Screen 06
+            // (institution search) passes nothing and gets no mic.
+            //
+            // The press asks for the microphone permission and then opens it —
+            // see `useVoiceSearch`. Nothing about a recogniser reaches this file.
+            onVoicePress={voice.onMicPress}
+            onFocus={() => setDropdownVisible(true)}
+            onBlur={() => setDropdownVisible(false)}
+          />
+
+          {/* The dropdown — recent searches only, anchored directly under the
+              search card (no gap, no top border, matching corner radius) so
+              it reads as part of the same control rather than a separate
+              panel floating below it. Shown on focus rather than tied to `state`,
+              since it is an overlay and has no reason to hide just because a
+              previous query already has results drawn beneath it. Recently
+              viewed stays out of it — a publication isn't a text suggestion,
+              and it keeps its own always-visible spot in the results area
+              below. */}
+          {dropdownVisible && filteredRecentQueries.length > 0 && (
+            <View testID="search-dropdown" style={[styles.dropdown, { top: inputHeight }]}>
+              <ScrollView keyboardShouldPersistTaps="handled" style={styles.dropdownScroll}>
+                {/* Recent searches — client-side only (recentSearchesStore.ts),
+                    narrowed to the draft as the reader types. */}
+                <View testID="search-recent" style={styles.recent}>
+                  <SectionHeader
+                    title="Recent searches"
+                    emphasis="editorial"
+                    actionLabel="Clear"
+                    onAction={clearRecentQueries}
+                  />
+                  {filteredRecentQueries.map((query) => (
+                    <Pressable
+                      key={query}
+                      testID="search-recent-item"
+                      onPress={() => onSelectRecentQuery(query)}
+                      style={styles.recentRow}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Search again for ${query}`}
+                    >
+                      <Ionicons
+                        name="time-outline"
+                        size={ROW_ICON_SIZE}
+                        color={color.textSecondary}
+                      />
+                      <Text style={styles.recentRowLabel} numberOfLines={1}>
+                        {query}
+                      </Text>
+                      {/* The classic "fills the search field" glyph — a plain
+                          up arrow rotated to point at the field above rather
+                          than a bespoke asset. */}
+                      <Ionicons
+                        name="arrow-up-outline"
+                        size={ROW_ICON_SIZE}
+                        color={color.textSecondary}
+                        style={styles.recentRowFillIcon}
+                      />
+                    </Pressable>
+                  ))}
+                </View>
+              </ScrollView>
+            </View>
+          )}
+        </View>
 
         <Text testID="search-helper" style={styles.helper}>
           {HELPER}
         </Text>
       </View>
 
-      {/* Content type and access tier both live behind this one sheet now —
-          same FilterSortSheet ShelfScreen already uses. Nothing re-searches
-          until Apply is pressed inside it. */}
-      <Pressable
-        testID="search-filter-button"
-        onPress={openSheet}
-        style={styles.filterButton}
-        accessibilityRole="button"
-        accessibilityLabel="Filter and sort"
-      >
-        <Text style={styles.filterButtonLabel}>
-          {hasActiveFilter ? `Filter & Sort (${activeFilterCount})` : 'Filter & Sort'}
-        </Text>
-      </Pressable>
+      {/* The outside-tap dismiss for the dropdown above — a transparent
+          full-screen layer beneath it (in stacking order, not JS order,
+          see `field`'s zIndex) so a tap anywhere else closes the dropdown
+          and drops the keyboard, the same way it would on the field losing
+          focus, without needing a real blur to trigger it. */}
+      {dropdownVisible && filteredRecentQueries.length > 0 && (
+        <Pressable
+          testID="search-dropdown-scrim"
+          style={styles.dropdownScrim}
+          onPress={closeDropdown}
+        />
+      )}
 
       <ScrollView contentContainerStyle={styles.results}>
+        {/* Fallback for every state that draws neither "Recently viewed" nor
+            the results-count row — see showStandaloneFilterButton's own
+            comment. Right-aligned to match where the button sits in both of
+            those rows rather than reverting to a left-aligned one here. */}
+        {showStandaloneFilterButton && (
+          <View style={styles.filterButtonRow}>
+            <FilterSortButton
+              testID="search-filter-button"
+              onPress={openSheet}
+              label={filterSortLabel}
+            />
+          </View>
+        )}
+
         {/* The plain instructional line only earns its place once a reader
             has actually started typing — with an empty draft, Popular
             searches and Recently viewed below are the more useful "here is
@@ -341,52 +464,32 @@ export default function SearchScreen() {
           </View>
         )}
 
-        {/* Recent searches — client-side only (recentSearchesStore.ts).
-            Shown only before a fresh query is typed: once a reader has
-            started their own, a list of old ones is clutter, not help. */}
-        {state === 'idle' && search.draft.trim().length === 0 && recentQueries.length > 0 && (
-          <View testID="search-recent" style={styles.recent}>
-            <SectionHeader
-              title="Recent searches"
-              emphasis="editorial"
-              actionLabel="Clear"
-              onAction={clearRecentQueries}
-            />
-            {recentQueries.map((query) => (
-              <Pressable
-                key={query}
-                testID="search-recent-item"
-                onPress={() => onSelectRecentQuery(query)}
-                style={styles.recentRow}
-                accessibilityRole="button"
-                accessibilityLabel={`Search again for ${query}`}
-              >
-                <Ionicons name="time-outline" size={ROW_ICON_SIZE} color={color.textSecondary} />
-                <Text style={styles.recentRowLabel} numberOfLines={1}>
-                  {query}
-                </Text>
-                {/* The classic "fills the search field" glyph — a plain up
-                    arrow rotated to point at the field above rather than a
-                    bespoke asset. */}
-                <Ionicons
-                  name="arrow-up-outline"
-                  size={ROW_ICON_SIZE}
-                  color={color.textSecondary}
-                  style={styles.recentRowFillIcon}
-                />
-              </Pressable>
-            ))}
-          </View>
-        )}
-
         {/* Client-side only (recentlyViewedStore.ts) — the reader's own last
-            few opened items. Same "before a fresh query" gating as Recent
-            searches; a reader mid-typing does not need a reminder of what
-            they already looked at. Drawn with the exact same row Catalogue
-            itself uses — see `renderPublicationRow`. */}
-        {state === 'idle' && search.draft.trim().length === 0 && recentlyViewed.length > 0 && (
+            few opened items. Visible for the whole of `idle`, typing
+            included — it only needs to step aside once the reader actually
+            submits and the state moves past `idle`, not merely because a
+            draft exists. Stays inline rather than moving into the dropdown,
+            since a publication isn't a text suggestion. Drawn with the
+            exact same row Catalogue itself uses — see
+            `renderPublicationRow`. */}
+        {state === 'idle' && recentlyViewed.length > 0 && (
           <View testID="search-recently-viewed" style={styles.recentlyViewed}>
-            <SectionHeader title="Recently viewed" emphasis="editorial" />
+            {/* Same FilterSortButton every other catalogue-shaped screen renders,
+                in the same trailing-heading slot PublicCatalogueScreen/ShelfScreen
+                use — one control that reads the same wherever it appears, rather
+                than a separate row floating above the list. Content type and
+                access tier both live behind this one sheet — see FilterSortSheet. */}
+            <SectionHeader
+              title="Recently viewed"
+              emphasis="editorial"
+              action={
+                <FilterSortButton
+                  testID="search-filter-button"
+                  onPress={openSheet}
+                  label={filterSortLabel}
+                />
+              }
+            />
             {recentlyViewed.map((publication) =>
               renderPublicationRow(publication, () =>
                 navigation.navigate('ItemDetail', { itemId: publication.id }),
@@ -526,12 +629,21 @@ export default function SearchScreen() {
 
         {/* The reference mockup's "1,245 results" line — server-reported,
             same source the bottom "Showing X of Y" note already trusts.
-            Shown once, above the list, rather than only after it. */}
+            Shown once, above the list, rather than only after it. Filter &
+            Sort rides along on the same row (resultsHeader is already a
+            space-between row for exactly this) so it stays reachable once a
+            search actually has results, not only at idle beside "Recently
+            viewed". */}
         {hasResults && search.totalItems !== undefined && (
           <View style={styles.resultsHeader}>
             <Text testID="search-results-count" style={styles.resultsCount}>
               {search.totalItems === 1 ? '1 result' : `${search.totalItems} results`}
             </Text>
+            <FilterSortButton
+              testID="search-filter-button"
+              onPress={openSheet}
+              label={filterSortLabel}
+            />
           </View>
         )}
 
@@ -628,10 +740,55 @@ const styles = StyleSheet.create({
     backgroundColor: color.white,
   },
   // SearchInput sets no outer margin of its own (CONVENTIONS §8), so the screen
-  // laying it out provides the gutter.
+  // laying it out provides the gutter. `zIndex` keeps this whole subtree
+  // painted above the filter button, results and scrim that follow it in
+  // the tree — the actual positioning anchor for `dropdown` is
+  // `fieldInputWrap` below, not this container.
   field: {
     paddingHorizontal: space.md,
     paddingTop: space.md,
+    zIndex: 20,
+  },
+  // Wraps ONLY the input — see the comment where this is used. `zIndex`
+  // keeps it (and `dropdown`) painted above the helper text below it,
+  // which is declared after it but outside it.
+  fieldInputWrap: {
+    position: 'relative',
+    zIndex: 1,
+  },
+  // Anchored flush against the search card itself — `top` is set inline to
+  // the input's own MEASURED height (see `inputHeight`), not `100%`, so it
+  // sits at a fixed pixel offset with no gap and no feedback into
+  // `fieldInputWrap`'s own layout. Top corners share the search card's own
+  // `radius.sheet` rather than going square, so the curve at the seam
+  // reads as one continuous shape flowing from the card into the dropdown
+  // instead of a rounded card butting into a sharp-cornered panel.
+  dropdown: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    maxHeight: 320,
+    backgroundColor: color.white,
+    borderRadius: radius.sheet,
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderColor: color.border,
+    overflow: 'hidden',
+    ...(Platform.OS === 'ios' ? elevation.raised.ios : elevation.raised.android),
+  },
+  dropdownScroll: {
+    padding: space.md,
+  },
+  // Full-screen and transparent — its only job is to catch a tap outside the
+  // dropdown and close it, sitting below `field`'s zIndex so the dropdown
+  // itself stays on top while still covering everything beneath it.
+  dropdownScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 15,
   },
   helper: {
     fontWeight: type.meta.weight,
@@ -641,27 +798,9 @@ const styles = StyleSheet.create({
     color: color.textSecondary,
     marginTop: space.sm,
   },
-  filterButton: {
-    alignSelf: 'flex-start',
-    marginHorizontal: space.md,
-    marginTop: space.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: color.border,
-    // A card, not a bare outline — same family as the search field and the
-    // result panels below, so this reads as one designed surface next to
-    // them rather than a plain HTML-style pill.
-    backgroundColor: color.white,
-    ...(Platform.OS === 'ios' ? elevation.card.ios : elevation.card.android),
-  },
-  filterButtonLabel: {
-    fontWeight: type.button.weight,
-    fontFamily: type.button.fontFamily,
-    fontSize: type.button.size,
-    lineHeight: type.button.lineHeight,
-    color: color.textPrimary,
+  filterButtonRow: {
+    alignItems: 'flex-end',
+    marginBottom: space.md,
   },
   recent: {
     gap: space.xs,
@@ -817,7 +956,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: space.sm,
+    // `md` on top of `results`' own `sm` gap totals `lg` — matching the gap
+    // ShelfScreen's heading has before its own row of cards.
+    marginBottom: space.md,
   },
   resultsCount: {
     fontFamily: type.meta.fontFamily,

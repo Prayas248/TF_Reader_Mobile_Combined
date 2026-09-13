@@ -60,6 +60,15 @@ export default function LayoutSection({ layout, onSelectFlow, onSelectSpread }: 
 
   return (
     <View style={styles.section} testID="layout-section">
+      {/* Every other section on this screen (Theme, Font, Typography) opens
+          with its own top-level heading, icon included — this card was the
+          one missing it, which read as a heading a level smaller than the
+          others even though "Reading style"/"Page view" use the identical
+          `SectionHeader` size. */}
+      <SectionHeader
+        title="Layout"
+        icon={<Ionicons name="grid-outline" size={SECTION_ICON_SIZE} color={color.primary} />}
+      />
       <View style={styles.group}>
         <SectionHeader
           title="Reading style"
@@ -97,12 +106,13 @@ export default function LayoutSection({ layout, onSelectFlow, onSelectSpread }: 
 
 const styles = StyleSheet.create({
   // No outer margin — the screen owns where the section sits (§8). Bordered,
-  // rounded card — see ThemeSection's own note. `md` between the two
-  // pickers, not `sm`: "Reading style" and "Page view" are two distinct
-  // controls, not one split in two, so they need real separation between
-  // them even inside one shared card.
+  // rounded card — see ThemeSection's own note. `lg`, matching the gap
+  // `content` puts between this whole card and the next one: "Reading
+  // style" and "Page view" are two distinct controls, not one split in two,
+  // and a smaller gap here than between cards read as them belonging to
+  // each other instead.
   section: {
-    gap: space.md,
+    gap: space.lg,
     padding: space.md,
     backgroundColor: color.white,
     borderRadius: radius.sheet,

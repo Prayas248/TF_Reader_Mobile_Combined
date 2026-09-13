@@ -163,10 +163,14 @@ const styles = StyleSheet.create({
     backgroundColor: color.white,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: color.border,
-    gap: space.sm,
+    gap: space.md,
   },
+  // `space.xl`, not `space.lg` — matches the width of the icon-chip container
+  // callers like ProfileScreen's `rowIcon()` wrap their icons in. A narrower
+  // slot let that chip overflow it and swallow the row's own `gap`, so the
+  // icon and title rendered with almost no space between them.
   leadingIcon: {
-    width: space.lg,
+    width: space.xl,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -69,3 +69,5 @@ samples
 # a local copy needed for `eas build` isn't silently committed with a feature change. If/when the
 # team decides to adopt EAS, delete this entry in the same change that adds the file back.
 eas.json
+
+design

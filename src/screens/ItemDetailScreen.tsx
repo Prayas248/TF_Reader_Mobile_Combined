@@ -93,15 +93,19 @@ interface ItemDetailRouteProps {
   // RootNavigator.tsx for why this is the reliable trigger (a plain nested
   // push is not).
   //
-  // ONE TITLE FOR EVERY WORK TYPE AND FORMAT, SET ONCE AT REGISTRATION
-  // ('Item Details' — RootNavigator.tsx), NOT NARROWED HERE. An earlier
-  // version of this screen called `navigation.setOptions({ title: ... })` to
-  // relabel an article as 'Article Details' — which left a real gap the
-  // other direction, since nothing ever relabelled an AUDIO-format item and
-  // it stayed 'Book Details' regardless. Reader, publisher and journal
-  // content share one shelf, one detail page and one route; a single,
-  // format-agnostic title is the fix that cannot drift per work type again,
-  // not a third label to keep in sync.
+  // NO TITLE IS SET HERE, AND NONE SHOULD BE. `AppHeader` (RootNavigator.tsx,
+  // `itemDetailHeaderTitle`) shows the name of whichever screen "back"
+  // returns to for this route — a shelf, a search results list, an
+  // institution page — rather than a fixed label; `options.title`
+  // ('Item Details') registered there is only the fallback for no previous
+  // screen. An earlier version of this screen called
+  // `navigation.setOptions({ title: ... })` to relabel an article as
+  // 'Article Details' — which left a real gap the other direction, since
+  // nothing ever relabelled an AUDIO-format item and it stayed 'Book
+  // Details' regardless. Reader, publisher and journal content share one
+  // shelf, one detail page and one route; narrowing the title per work type
+  // is still the thing to avoid, and the fix now is orthogonal to work type
+  // entirely — the title tracks navigation history, not content.
   navigation: {
     navigate(screen: 'AccessGate', params: { itemId: string; title: string; authors: string }): void;
     navigate(screen: 'Reader', params: { bookId: BookId; format: ContentFormat }): void;
