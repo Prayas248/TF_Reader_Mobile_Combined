@@ -275,20 +275,19 @@ export default function ProfileScreen() {
                   <Text style={styles.accountMeta}>Institutional access</Text>
                 </View>
 
-                {/* "Active access" is not a fetched flag — this branch already
+                {/* "ACTIVE ACCESS" is not a fetched flag — this branch already
                     requires a real, current session scoped to this institution,
                     so the line states a fact this render is conditioned on
                     rather than one it looks up. */}
                 <View style={styles.identitySubRow}>
                   <Ionicons name="checkmark-circle" size={type.smallLabel.size} color={color.success} />
-                  <Text style={styles.activeAccessLabel}>Active access</Text>
+                  <Text style={styles.activeAccessLabel}>ACTIVE ACCESS</Text>
                 </View>
 
-                {/* The address is real data shown twice in two roles: the
-                    headline above names the institution to identify it, this
-                    line names it again to place it — the same pairing
-                    `InstitutionRow` and `InstitutionDetailView` already show
-                    as name-then-country elsewhere in this app. */}
+                {/* The headline above already names the institution, so this
+                    meta panel places it instead: city/code, then country —
+                    plus the sign-in method beside the country when the
+                    detail fetch supplied one (absent from a list-only fetch). */}
                 <View style={styles.identitySubRow}>
                   <Ionicons
                     name="business-outline"
@@ -296,8 +295,15 @@ export default function ProfileScreen() {
                     color={color.textSecondary}
                   />
                   <View>
-                    <Text style={styles.institutionAddress}>{selectedInstitution.name}</Text>
-                    <Text style={styles.institutionAddress}>{selectedInstitution.country}</Text>
+                    <Text style={styles.institutionAddress}>
+                      {selectedInstitution.city} · {selectedInstitution.code}
+                    </Text>
+                    <Text style={styles.institutionAddress}>
+                      {selectedInstitution.country}
+                      {selectedInstitution.signIn !== undefined
+                        ? ` · ${selectedInstitution.signIn.method} authenticated`
+                        : ''}
+                    </Text>
                   </View>
                 </View>
               </View>
@@ -448,7 +454,7 @@ export default function ProfileScreen() {
         <View style={styles.groupCard}>
           <ListRow
             title="Reading Preferences"
-            subtitle="Font size, theme"
+            subtitle="Themes, fonts, margins & layout"
             variant="chevron"
             emphasis="editorial"
             onPress={handleReadingPreferences}
@@ -456,7 +462,7 @@ export default function ProfileScreen() {
           />
           <ListRow
             title="Accessibility"
-            subtitle="Text, display and screen reader options"
+            subtitle="High contrast, text scaling & screen reader"
             variant="chevron"
             emphasis="editorial"
             onPress={handleAccessibility}

@@ -419,7 +419,9 @@ export default function SearchScreen() {
           )}
         </View>
 
-        
+        <Text testID="search-helper" style={styles.helper}>
+          {HELPER}
+        </Text>
       </View>
 
       {/* The outside-tap dismiss for the dropdown above — a transparent
