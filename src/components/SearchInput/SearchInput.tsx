@@ -5,8 +5,10 @@
 //
 // IT HOLDS NO QUERY STATE AND RUNS NO SEARCH. `value` in, `onChangeText` out — a
 // controlled input. Debouncing, tokenising, ranking and fetching belong to the
-// pipeline that owns the query (CONVENTIONS §3). The only thing this component
-// owns is focus, which is local UI state and nobody else's business.
+// pipeline that owns the query (CONVENTIONS §3). Focus is still this
+// component's own local state for styling purposes — `onFocus`/`onBlur` below
+// are an optional bubble-up for a caller that needs to react to it (e.g. a
+// suggestions dropdown), not a transfer of ownership.
 //
 // THE MIC IS OPT-IN, VIA `onVoicePress` RATHER THAN A BOOLEAN. Voice (B11) is
 // catalogue-scoped only, so institution search must not show it. There is no
@@ -70,6 +72,10 @@ export interface SearchInputProps {
   state?: SearchInputState;
   /** Not typeable, and the trailing controls are withdrawn. */
   disabled?: boolean;
+  /** The field gained focus. Optional — a bubble-up of this component's own focus state. */
+  onFocus?: () => void;
+  /** The field lost focus. Optional — same bubble-up as `onFocus`. */
+  onBlur?: () => void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -83,6 +89,8 @@ export default function SearchInput({
   onVoicePress,
   state = 'idle',
   disabled = false,
+  onFocus,
+  onBlur,
 }: SearchInputProps) {
   // Focus is the one piece of state a controlled input may hold: it is the
   // presentation of an interaction, not knowledge about the query.
@@ -124,8 +132,14 @@ export default function SearchInput({
         placeholderTextColor={color.textSecondary}
         onChangeText={onChangeText}
         onSubmitEditing={onSubmit}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onFocus={() => {
+          setFocused(true);
+          onFocus?.();
+        }}
+        onBlur={() => {
+          setFocused(false);
+          onBlur?.();
+        }}
         editable={!disabled}
         returnKeyType="search"
         // A query is not prose. Autocorrecting a surname into a dictionary word

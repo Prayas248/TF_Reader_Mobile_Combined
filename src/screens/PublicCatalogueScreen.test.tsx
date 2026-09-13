@@ -126,7 +126,7 @@ describe('PublicCatalogueScreen with data', () => {
   // A flat list, not a home screen. The feed's own title is metadata for the app
   // bar, not a section heading, and rendering it would make one list look like
   // the first of several.
-  it('renders no category cards and no section heading', async () => {
+  it('renders no category cards, and one fixed section heading naming the list', async () => {
     setCatalogueSource(fakeSource(async () => FIRST_PAGE));
 
     await render(<PublicCatalogueScreen />);
@@ -135,7 +135,7 @@ describe('PublicCatalogueScreen with data', () => {
       expect(screen.getByText('Coastal Wetlands of the Bay of Bengal')).toBeTruthy(),
     );
     expect(screen.queryAllByTestId('category-card-title')).toHaveLength(0);
-    expect(screen.queryByText('Open access titles')).toBeNull();
+    expect(screen.getByText('Open Access Titles')).toBeTruthy();
   });
 
   it('navigates to ItemDetail with the publication id when a row is pressed', async () => {

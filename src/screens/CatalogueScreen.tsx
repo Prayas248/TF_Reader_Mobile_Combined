@@ -46,7 +46,7 @@ import EmptyState from '@/components/EmptyState';
 import { useCurrentSession, useIsSignedIn } from '@access/currentSession';
 import { isNotEntitled, resolveAccess } from '@access/resolveAccess';
 import { AccessTierBadge } from '@components/AccessTierBadge';
-import { ContentCard } from '../components/ContentCard';
+import { ContentCard, COVER_TILE_WIDTH } from '../components/ContentCard';
 import { ErrorState } from '@components/ErrorState';
 import { HeroBanner } from '@components/HeroBanner';
 import { SectionHeader } from '../components/SectionHeader';
@@ -80,18 +80,19 @@ const HERO_SUBTITLE =
 const HERO_ACTION_LABEL = 'Explore All Titles';
 const HERO_UPDATED_LABEL = 'Updated daily';
 
-// The width CatalogueScreen's first-shelf carousel gives each cover tile —
-// ContentCard sets no width of its own (CONVENTIONS §8). Wide enough that two
-// tiles fill most of the content width with only a small peek of a third,
-// rather than the narrower tile this replaced, which left each card reading
-// as tall and cramped relative to how little of the row's own width it used.
-const COVER_CARD_WIDTH = space.xl * 5 + space.md;
-
+// `COVER_TILE_WIDTH` (ContentCard's own export) is what this carousel was
+// originally sized around — wide enough that two tiles fill most of the
+// content width with only a small peek of a third. Now shared, not
+// redeclared here: PublicCatalogueScreen's and ShelfScreen's two-up grids
+// size their cover tiles off the same constant, on explicit instruction that
+// a book cover must render at an identical width, and therefore an
+// identical height, everywhere in the app.
+//
 // A tile's own width plus the gap the carousel puts after it (`styles.carousel`'s
 // own `gap`) — the fixed distance from one tile's left edge to the next
 // one's, which is what turns an index into an x-position for visibility
 // math (see `isCoverTileVisible`) without needing a per-tile `onLayout`.
-const COVER_CARD_STEP = COVER_CARD_WIDTH + space.md;
+const COVER_CARD_STEP = COVER_TILE_WIDTH + space.md;
 
 export interface CatalogueScreenProps {
   institution: Institution;
@@ -153,29 +154,33 @@ export default function CatalogueScreen({ institution }: CatalogueScreenProps) {
   const isCoverTileVisible = useCallback(
     (index: number) => {
       const tileStart = index * COVER_CARD_STEP;
-      const tileEnd = tileStart + COVER_CARD_WIDTH;
+      const tileEnd = tileStart + COVER_TILE_WIDTH;
       return tileEnd > carouselScrollX && tileStart < carouselScrollX + carouselViewportWidth;
     },
     [carouselScrollX, carouselViewportWidth],
   );
 
   let body: ReactNode;
-  // No synchronous setState here — only inside the async continuations. A
-  // setState reachable directly from an effect body triggers a lint error
-  // ("cascading renders"); `loading`/`failed` are also already at these exact
-  // values on mount, so resetting them here would be redundant anyway. Retry
-  // is the one path that truly needs to reset them, and it runs from a press
-  // handler, not an effect — see below.
+  // `loading`/`failed` ARE reset synchronously here, on purpose — this used to
+  // skip the reset (leaving it to `retry`'s press handler only), reasoning
+  // that a mount already starts at these values so it would be redundant.
+  // That missed the OTHER caller of this identity change: `isSignedIn`
+  // flipping mid-mount (see its own comment below) re-runs the effect below
+  // with a stale `failed=true`/`errorCode=UNAUTHENTICATED` still on screen
+  // from the signed-out fetch that failed moments earlier, and nothing
+  // cleared it until the new fetch resolved — so a reader who just signed in
+  // saw the "You need to sign in again" ErrorState (with its "Learn more"
+  // button) flash back up before the real catalogue replaced it. Resetting
+  // here closes that gap: whatever re-triggers a fetch, the screen goes back
+  // to its loading skeleton for the duration, never the previous failure.
   const fetchCatalogue = useCallback(() => {
+    setLoading(true);
+    setFailed(false);
+    setErrorCode(undefined);
     getCatalogueSource()
       .getHomeCatalogue(institutionId)
       .then((result) => {
         setCatalogue(result);
-        // Clears a failure left over from a previous institution — this fetch
-        // succeeded, so a stale "no catalogue" from before must not stick
-        // around when the reader switches back to one that works.
-        setFailed(false);
-        setErrorCode(undefined);
       })
       .catch((err: unknown) => {
         setErrorCode(isCatalogueFailure(err) ? err.code : undefined);
@@ -190,6 +195,14 @@ export default function CatalogueScreen({ institution }: CatalogueScreenProps) {
   }, [institutionId, isSignedIn]);
 
   useEffect(() => {
+    // The lint rule this disables is right that setState-in-effect can cause
+    // needless cascading renders in general, but that is not what this is:
+    // fetchCatalogue's synchronous reset (loading=true, failed=false) is the
+    // fix for the bug this effect exists to close (see fetchCatalogue's own
+    // comment) — every re-run of this effect starts a NEW async fetch, and
+    // the reset is what stops the PREVIOUS fetch's stale result from staying
+    // on screen for the duration of the new one.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchCatalogue();
     // Populate the holdings cache once per mount so every card's badge is live
     // rather than the empty-cache default. Runs in parallel with fetchCatalogue.
@@ -197,8 +210,6 @@ export default function CatalogueScreen({ institution }: CatalogueScreenProps) {
   }, [fetchCatalogue, refresh]);
 
   const retry = useCallback(() => {
-    setLoading(true);
-    setFailed(false);
     fetchCatalogue();
   }, [fetchCatalogue]);
 
@@ -402,6 +413,6 @@ const styles = StyleSheet.create({
   // The carousel owns each cover tile's width — ContentCard sets none of its
   // own (CONVENTIONS §8).
   coverCard: {
-    width: COVER_CARD_WIDTH,
+    width: COVER_TILE_WIDTH,
   },
 });

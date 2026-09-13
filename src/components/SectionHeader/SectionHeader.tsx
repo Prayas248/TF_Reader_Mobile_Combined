@@ -47,6 +47,11 @@ export interface SectionHeaderProps {
   // of screen 01; the with_action variant belongs to screens 06 and 09.
   actionLabel?: string;
   onAction?: () => void;
+  // A ready-made trailing element (e.g. FilterSortButton) for callers whose
+  // action isn't a plain text link. Takes the same trailing slot as
+  // actionLabel/onAction and wins if both are supplied — the two are not
+  // meant to be combined on one header.
+  action?: ReactNode;
   emphasis?: SectionHeaderEmphasis;
   /** A small glyph or short text (e.g. "Aa") in a light rounded-square box, leading the title. */
   icon?: ReactNode;
@@ -56,11 +61,12 @@ export default function SectionHeader({
   title,
   actionLabel,
   onAction,
+  action,
   emphasis = 'default',
   icon,
 }: SectionHeaderProps) {
   // Both, or neither — see the header.
-  const showAction = actionLabel !== undefined && onAction !== undefined;
+  const showTextAction = actionLabel !== undefined && onAction !== undefined;
 
   return (
     <View testID="section-header" style={styles.header}>
@@ -75,21 +81,25 @@ export default function SectionHeader({
         {title}
       </Text>
 
-      {showAction && (
-        <Pressable
-          testID="section-header-action"
-          style={styles.actionSlot}
-          onPress={onAction}
-          accessibilityRole="button"
-          // Carries the section name: "See all" on its own tells a screen-reader
-          // user which words are on screen but not which shelf they open.
-          accessibilityLabel={`${actionLabel} ${title}`}
-          // Grows the touch target without padding the text, which would pull
-          // the label in from the row's right edge.
-          hitSlop={space.sm}
-        >
-          <Text style={styles.action}>{actionLabel}</Text>
-        </Pressable>
+      {action !== undefined ? (
+        <View style={styles.actionSlot}>{action}</View>
+      ) : (
+        showTextAction && (
+          <Pressable
+            testID="section-header-action"
+            style={styles.actionSlot}
+            onPress={onAction}
+            accessibilityRole="button"
+            // Carries the section name: "See all" on its own tells a screen-reader
+            // user which words are on screen but not which shelf they open.
+            accessibilityLabel={`${actionLabel} ${title}`}
+            // Grows the touch target without padding the text, which would pull
+            // the label in from the row's right edge.
+            hitSlop={space.sm}
+          >
+            <Text style={styles.action}>{actionLabel}</Text>
+          </Pressable>
+        )
       )}
     </View>
   );

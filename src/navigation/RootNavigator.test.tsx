@@ -84,6 +84,13 @@ jest.mock('../screens/GalleryScreen', () => ({
   __esModule: true,
   default: () => null,
 }));
+jest.mock('../screens/StartupGateScreen', () => ({
+  __esModule: true,
+  default: () => {
+    const { Text } = require('react-native');
+    return <Text testID="screen-startup-gate">StartupGate</Text>;
+  },
+}));
 
 // ReaderRouteScreen pulls in ReaderScreen -> useTtsSession -> ttsEngine.ts's
 // `import Tts from '@iternio/react-native-tts'` at REQUIRE time (native-stack resolves the whole
@@ -132,7 +139,7 @@ const TEST_INSTITUTION = {
 
 afterEach(() => {
   useInstitutionStore.setState({ _hasHydrated: false, selectedInstitution: null });
-  useSessionStore.setState({ _authReady: false });
+  useSessionStore.setState({ _authReady: false, isAuthenticated: false });
 });
 
 // ─── Hydration gate ───────────────────────────────────────────────────────────
@@ -153,7 +160,7 @@ describe('RootNavigator — hydration gate', () => {
   it('renders the full navigator once the store has hydrated', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -163,7 +170,7 @@ describe('RootNavigator — hydration gate', () => {
   it('shows a blank splash while auth has not resolved, even if institutions have hydrated', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true });
-      useSessionStore.setState({ _authReady: false });
+      useSessionStore.setState({ _authReady: false, isAuthenticated: false });
       renderNavigator();
     });
 
@@ -173,7 +180,7 @@ describe('RootNavigator — hydration gate', () => {
   it('shows a blank splash while institutions have not hydrated, even if auth has resolved', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: false });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -187,7 +194,7 @@ describe('RootNavigator — tab wiring', () => {
   it('renders all four bottom tabs', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -200,7 +207,7 @@ describe('RootNavigator — tab wiring', () => {
   it('starts on the Catalogue tab with CatalogueHome as the initial screen', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -210,7 +217,7 @@ describe('RootNavigator — tab wiring', () => {
   it('switches to Search when the Search tab is pressed', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -224,7 +231,7 @@ describe('RootNavigator — tab wiring', () => {
   it('switches to Profile when the Profile tab is pressed', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -244,7 +251,7 @@ describe('RootNavigator — institution pill', () => {
   it('shows the selected institution on the Catalogue tab root', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true, selectedInstitution: TEST_INSTITUTION });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -254,7 +261,7 @@ describe('RootNavigator — institution pill', () => {
   it('shows no pill when no institution is selected', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true, selectedInstitution: null });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -267,7 +274,7 @@ describe('RootNavigator — institution pill', () => {
   it('shows the pill on the Search tab root too', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true, selectedInstitution: TEST_INSTITUTION });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -281,7 +288,7 @@ describe('RootNavigator — institution pill', () => {
   it('shows the pill on the Library tab root too', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true, selectedInstitution: TEST_INSTITUTION });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -295,7 +302,7 @@ describe('RootNavigator — institution pill', () => {
   it('shows the pill on the Profile tab root too', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true, selectedInstitution: TEST_INSTITUTION });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -309,7 +316,7 @@ describe('RootNavigator — institution pill', () => {
   it('navigates to InstitutionList when pressed', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true, selectedInstitution: TEST_INSTITUTION });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
@@ -336,10 +343,41 @@ describe('RootNavigator — QueueNotificationHost', () => {
   it('mounts QueueNotificationHost above the tab navigator', async () => {
     await act(async () => {
       useInstitutionStore.setState({ _hasHydrated: true });
-      useSessionStore.setState({ _authReady: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
       renderNavigator();
     });
 
     expect(screen.getByTestId('queue-notification-host')).toBeTruthy();
+  });
+});
+
+// ─── Startup gate — initialRouteName, not an imperative navigate() ──────────
+
+describe('RootNavigator — startup gate', () => {
+  // The gate is `initialRouteName`, decided at the exact moment the navigator
+  // first mounts (i.e. the instant hasHydrated/authReady both flip true) —
+  // see RootNavigator.tsx's own comment for why this replaced an imperative
+  // `navigate()` call from App.tsx, which could silently no-op if it fired
+  // before the navigator had finished registering with the container.
+  it('starts on StartupGate when nobody is signed in', async () => {
+    await act(async () => {
+      useInstitutionStore.setState({ _hasHydrated: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: false });
+      renderNavigator();
+    });
+
+    expect(screen.getByTestId('screen-startup-gate')).toBeTruthy();
+    expect(screen.queryByTestId('screen-catalogue-home')).toBeNull();
+  });
+
+  it('starts on Main (skips the gate) when already signed in', async () => {
+    await act(async () => {
+      useInstitutionStore.setState({ _hasHydrated: true });
+      useSessionStore.setState({ _authReady: true, isAuthenticated: true });
+      renderNavigator();
+    });
+
+    expect(screen.getByTestId('screen-catalogue-home')).toBeTruthy();
+    expect(screen.queryByTestId('screen-startup-gate')).toBeNull();
   });
 });

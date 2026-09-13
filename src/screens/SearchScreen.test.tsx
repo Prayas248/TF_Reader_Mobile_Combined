@@ -123,6 +123,13 @@ async function submit(query: string) {
   await fireEvent(screen.getByTestId('search-input-field'), 'submitEditing');
 }
 
+// The recent-searches/recently-viewed dropdown is focus-driven now — nothing
+// in it renders until the field itself reports focus, same signal SearchInput
+// bubbles up for real via its own onFocus/onBlur.
+async function focusField() {
+  await fireEvent(screen.getByTestId('search-input-field'), 'focus');
+}
+
 // Signed in with an institution for every test — SearchScreen reads the real
 // institutionId off the session now, so a test that cares about it (the
 // request-shape and browse-instead assertions below) needs one present.
@@ -216,45 +223,79 @@ describe('query state', () => {
 // Client-side only (recentSearchesStore.ts) — nothing here goes near a pipeline.
 
 describe('recent searches', () => {
-  it('shows nothing before any search has been submitted', async () => {
+  it('shows nothing before any search has been submitted, even while focused', async () => {
     setSearchPipeline(stub(() => Promise.resolve(feed())));
     await render(<SearchScreen />);
+
+    await focusField();
 
     expect(screen.queryByTestId('search-recent')).toBeNull();
   });
 
-  it('remembers a submitted query and offers it back', async () => {
+  it('shows nothing while unfocused, even with a remembered query', async () => {
     setSearchPipeline(stub(() => Promise.resolve(feed({ publications: [FIRST] }))));
     await render(<SearchScreen />);
 
     await submit('climate');
     await fireEvent.press(screen.getByTestId('search-input-clear'));
 
+    expect(screen.queryByTestId('search-recent')).toBeNull();
+  });
+
+  it('remembers a submitted query and offers it back once the field is focused', async () => {
+    setSearchPipeline(stub(() => Promise.resolve(feed({ publications: [FIRST] }))));
+    await render(<SearchScreen />);
+
+    await submit('climate');
+    await fireEvent.press(screen.getByTestId('search-input-clear'));
+    await focusField();
+
     await waitFor(() => expect(screen.getByTestId('search-recent')).toBeTruthy());
     expect(screen.getByText('climate')).toBeTruthy();
   });
 
-  it('re-runs a recent query when it is tapped', async () => {
+  it('re-runs a recent query when it is tapped, and closes the dropdown', async () => {
     const pipeline = stub(() => Promise.resolve(feed({ publications: [FIRST] })));
     setSearchPipeline(pipeline);
     await render(<SearchScreen />);
 
     await submit('climate');
     await fireEvent.press(screen.getByTestId('search-input-clear'));
+    await focusField();
     await waitFor(() => expect(screen.getByText('climate')).toBeTruthy());
 
     await fireEvent.press(screen.getByText('climate'));
 
     await waitFor(() => expect(pipeline.searchCalls).toHaveLength(2));
     expect(pipeline.searchCalls[1]).toMatchObject({ query: 'climate' });
+    expect(screen.queryByTestId('search-recent')).toBeNull();
   });
 
-  it('hides the list again once a fresh query is being typed', async () => {
+  it('narrows to queries that start with the draft as the reader types', async () => {
+    setSearchPipeline(stub(() => Promise.resolve(feed())));
+    await render(<SearchScreen />);
+
+    await submit('climate policy');
+    await fireEvent.press(screen.getByTestId('search-input-clear'));
+    await submit('open access');
+    await fireEvent.press(screen.getByTestId('search-input-clear'));
+    await focusField();
+    await waitFor(() => expect(screen.getByText('climate policy')).toBeTruthy());
+    expect(screen.getByText('open access')).toBeTruthy();
+
+    await fireEvent.changeText(screen.getByTestId('search-input-field'), 'clim');
+
+    expect(screen.getByText('climate policy')).toBeTruthy();
+    expect(screen.queryByText('open access')).toBeNull();
+  });
+
+  it('hides the list again once no remembered query matches the draft', async () => {
     setSearchPipeline(stub(() => Promise.resolve(feed({ publications: [FIRST] }))));
     await render(<SearchScreen />);
 
     await submit('climate');
     await fireEvent.press(screen.getByTestId('search-input-clear'));
+    await focusField();
     await waitFor(() => expect(screen.getByTestId('search-recent')).toBeTruthy());
 
     await fireEvent.changeText(screen.getByTestId('search-input-field'), 'open');
@@ -268,6 +309,7 @@ describe('recent searches', () => {
 
     await submit('climate');
     await fireEvent.press(screen.getByTestId('search-input-clear'));
+    await focusField();
     // The "Clear" action now comes from SectionHeader's own action slot —
     // same component Catalogue's shelf headers use, accessibilityLabel names
     // the section per that component's own header comment.
@@ -278,6 +320,23 @@ describe('recent searches', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Clear Recent searches' }));
 
     expect(screen.queryByTestId('search-recent')).toBeNull();
+  });
+
+  it('closes on an outside tap, dropping the keyboard without submitting anything', async () => {
+    const pipeline = stub(() => Promise.resolve(feed({ publications: [FIRST] })));
+    setSearchPipeline(pipeline);
+    await render(<SearchScreen />);
+
+    await submit('climate');
+    await fireEvent.press(screen.getByTestId('search-input-clear'));
+    await focusField();
+    await waitFor(() => expect(screen.getByTestId('search-dropdown-scrim')).toBeTruthy());
+
+    await fireEvent.press(screen.getByTestId('search-dropdown-scrim'));
+
+    expect(screen.queryByTestId('search-recent')).toBeNull();
+    expect(screen.queryByTestId('search-dropdown-scrim')).toBeNull();
+    expect(pipeline.searchCalls).toHaveLength(1);
   });
 });
 
@@ -291,7 +350,9 @@ describe('recently viewed', () => {
 
   // Drawn with the exact same `ContentCard` row Catalogue and the results
   // list use — on explicit instruction not to invent a second display for
-  // the same kind of data.
+  // the same kind of data. Always visible before a fresh query — unlike
+  // Recent searches, this stays out of the focus-driven dropdown, since a
+  // publication isn't a text suggestion.
   it('lists a real viewed item through the same ContentCard row as a search result', async () => {
     useRecentlyViewedStore.getState().recordView({
       id: 'item_viewed',
@@ -356,7 +417,7 @@ describe('recently viewed', () => {
     expect(pipeline.searchCalls).toHaveLength(0);
   });
 
-  it('hides once a fresh query is being typed', async () => {
+  it('stays visible while a fresh query is being typed, not yet submitted', async () => {
     useRecentlyViewedStore.getState().recordView({
       id: 'item_viewed',
       title: 'Rights for Robots',
@@ -369,6 +430,23 @@ describe('recently viewed', () => {
     await waitFor(() => expect(screen.getByTestId('search-recently-viewed')).toBeTruthy());
 
     await fireEvent.changeText(screen.getByTestId('search-input-field'), 'open');
+
+    expect(screen.getByTestId('search-recently-viewed')).toBeTruthy();
+  });
+
+  it('hides once that query is actually submitted', async () => {
+    useRecentlyViewedStore.getState().recordView({
+      id: 'item_viewed',
+      title: 'Rights for Robots',
+      authors: [],
+      subjects: [],
+      acquisition: { actionId: 'openAccess', href: 'https://x', licenceModel: 'OPEN_ACCESS', encryption: null },
+    });
+    setSearchPipeline(stub(() => Promise.resolve(feed())));
+    await render(<SearchScreen />);
+    await waitFor(() => expect(screen.getByTestId('search-recently-viewed')).toBeTruthy());
+
+    await submit('open access');
 
     expect(screen.queryByTestId('search-recently-viewed')).toBeNull();
   });

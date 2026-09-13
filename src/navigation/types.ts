@@ -12,8 +12,16 @@ export type PersonalAccountMode = 'signIn' | 'signUp';
 
 /** Root stack wraps the tab navigator + the dev Gallery modal. */
 export type RootStackParamList = {
-  Main: undefined;
+  // Typed as NavigatorScreenParams (not `undefined`) so StartupGate's "Sign
+  // In" tap can deep-link straight to Profile's SignInMethod chooser —
+  // `navigate('Main', { screen: 'Profile', params: { screen: 'SignInMethod' } })`.
+  Main: NavigatorScreenParams<RootTabParamList> | undefined;
   Gallery: undefined;
+  // Screen 00b — raised once, right after splash, when nobody is signed in.
+  // Registered at the root rather than per-tab-stack (unlike AccessGate/SignIn)
+  // because it isn't reached from any specific item or tab — it's a startup
+  // interruption over whichever tab root the reader lands on.
+  StartupGate: undefined;
 };
 
 /** Four bottom tabs. */
@@ -23,7 +31,10 @@ export type RootTabParamList = {
   Catalogue: NavigatorScreenParams<CatalogueStackParamList> | undefined;
   Search: undefined;
   Library: undefined;
-  Profile: undefined;
+  // NavigatorScreenParams, same reason Catalogue is: StartupGate's "Sign In"
+  // deep-links to Profile's SignInMethod screen rather than switching tabs
+  // with nothing else specified.
+  Profile: NavigatorScreenParams<ProfileStackParamList> | undefined;
 };
 
 /** Catalogue nested stack — has pushed detail screens. */

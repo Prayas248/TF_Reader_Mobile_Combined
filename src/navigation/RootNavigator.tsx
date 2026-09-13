@@ -32,6 +32,7 @@ import SignInScreen from '../screens/SignInScreen';
 import AccessGateScreen from '../screens/AccessGateScreen';
 import SignInMethodScreen from '../screens/SignInMethodScreen';
 import PersonalAccountScreen from '../screens/PersonalAccountScreen';
+import StartupGateScreen from '../screens/StartupGateScreen';
 
 // Reader engine integration seam (integration_ref.md Phase 2.1) — the reader team's own route
 // screens, mounted directly into the Catalogue/Search stacks rather than a separate flat shell.
@@ -517,6 +518,7 @@ function TabNavigator() {
 export default function RootNavigator() {
   const hasHydrated = useInstitutionStore((s) => s._hasHydrated);
   const authReady = useSessionStore((s) => s._authReady);
+  const isAuthenticated = useSessionStore((s) => s.isAuthenticated);
 
   if (!hasHydrated || !authReady) {
     return <View style={styles.splash} />;
@@ -524,8 +526,29 @@ export default function RootNavigator() {
 
   return (
     <View style={styles.root}>
-      <RootStack.Navigator screenOptions={{ headerShown: false }}>
+      {/* `initialRouteName` here, NOT an imperative `navigate()` call from
+          App.tsx — this line only runs once, at the exact moment
+          RootStack.Navigator itself first mounts (which is exactly when
+          hasHydrated/authReady flip true), so there is no ref/"is the
+          navigator ready yet" race to lose. An earlier version tried the
+          imperative route from a `navigationRef` in App.tsx and it could
+          silently no-op if `navigate()` fired before the navigator had
+          finished registering with the container. */}
+      <RootStack.Navigator
+        screenOptions={{ headerShown: false }}
+        initialRouteName={isAuthenticated ? 'Main' : 'StartupGate'}
+      >
         <RootStack.Screen name="Main" component={TabNavigator} />
+        {/* Raised once per cold start, right after splash, when nobody is
+            signed in — see StartupGateScreen's own header. 'fade', not
+            'slide_from_bottom', for the same reason AccessGate/SignIn use it:
+            the sheet's navy backdrop is part of this screen, and it slides up
+            on its own via its Animated.View. */}
+        <RootStack.Screen
+          name="StartupGate"
+          component={StartupGateScreen}
+          options={{ presentation: 'transparentModal', animation: 'fade', headerShown: false }}
+        />
         <RootStack.Screen
           name="Gallery"
           component={GalleryScreen}

@@ -539,6 +539,19 @@ export default function ContentCard({
   return pressableNode;
 }
 
+// The cover tile's own width — CatalogueScreen's carousel was the first
+// caller, sized wide enough that two tiles fill most of the content width
+// with only a small peek of a third (see that screen's own former comment,
+// now moved here). Exported so every OTHER cover-tile caller
+// (PublicCatalogueScreen's and ShelfScreen's two-up grids) can size off the
+// SAME number instead of a second, independently-guessed one — on explicit
+// instruction that a book's cover, unchanged in ratio here, must render at
+// an identical width (and therefore an identical height) everywhere in the
+// app that draws a cover tile. `aspectRatio` is never overridden per
+// caller for the same reason: two callers agreeing on width and ratio but
+// disagreeing on width alone was the actual bug this fixes.
+export const COVER_TILE_WIDTH = space.xl * 5 + space.md;
+
 // The row thumbnail's width — the reference design's own `w-24` (96px) — and
 // the chevron's box. Both are sizes rather than spacing, but they are
 // composed from the spacing scale so no bare number reaches the stylesheet
@@ -947,17 +960,17 @@ const styles = StyleSheet.create({
   // was still reading too tall even after the previous pass, and this was
   // the one remaining margin left to give back without touching the cover
   // image's own protected ratio.
-  // `marginBottom: space.xs`, on top of `cardCover`'s own `xs` padding, so
-  // the badge's gap to the tile's bottom border totals `sm` (8) — the same
-  // total the row variant gets from `card`'s own `padding: space.sm` alone.
-  // Without it this was the one edge of the badge still inset by only `xs`
-  // (4) while every other badge-to-border measurement in both variants
-  // (including this same slot's own `paddingHorizontal` below) already
-  // matches at 8.
+  //
+  // NO `marginBottom` EITHER, ANY MORE — same instruction, a later pass: it
+  // used to add `space.xs` on top of `cardCover`'s own `xs` padding so the
+  // badge's gap to the tile's bottom border totalled `sm` (8), matching the
+  // row variant's own `card` padding. Giving that back shrinks every cover
+  // tile in the app by 4px without touching the cover image's protected
+  // ratio or width — the badge's bottom inset is now `xs` (4), one size
+  // tighter than the row variant's, which is the accepted trade.
   badgeSlot: {
     height: BADGE_HEIGHT,
     paddingHorizontal: space.xs,
-    marginBottom: space.xs,
     alignItems: 'flex-start',
   },
   // Two borders on a rotated square: a chevron without an icon font, since none
