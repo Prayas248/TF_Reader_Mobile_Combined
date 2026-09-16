@@ -11,6 +11,7 @@
 // Height floors at MIN_TOUCH_TARGET rather than ReaderScreen's own hard-coded 44 — see
 // a11yConstants.ts's header for why these stay two separate copies.
 
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { color, space } from '@theme/tokens';
@@ -31,7 +32,7 @@ export function AccessibilityInfoButton({
       onPress={onPress}
       style={styles.row}
     >
-      <Text style={styles.icon}>♿</Text>
+      <Ionicons name="accessibility-outline" style={styles.icon} />
       <Text style={styles.label}>Accessibility information</Text>
     </Pressable>
   );

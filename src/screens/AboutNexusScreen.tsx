@@ -23,7 +23,7 @@ import { color, radius, space, type } from '@theme/tokens';
 
 // The Nexus mark — transparent background, same asset TopAppBar and
 // BootSplash use, rather than a generic Ionicon standing in for the brand.
-const NEXUS_LOGO = require('../../assets/nexus-fixed.png');
+const NEXUS_LOGO = require('../../assets/nexus-3.png');
 
 type Nav = NativeStackNavigationProp<ProfileStackParamList, 'AboutNexus'>;
 

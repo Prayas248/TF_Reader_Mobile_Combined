@@ -701,6 +701,11 @@ npm run lint      # eslint --max-warnings=0
 All three must pass. For reader changes that affect rendering, also run it on the simulator
 (`npm run ios`) — `expo-dev-client` is required; Expo Go cannot load the crypto native modules.
 
+**Verifying a local Android release build (`./gradlew assembleRelease`) has two sharp edges** —
+a silent `EXPO_PUBLIC_*` env-var fallback and a stale-dev-client-state trap that makes a working
+release APK suddenly show the Expo dev-client launcher instead of the app. See
+`ANDROID_RELEASE_BUILD_NOTES.md` before chasing either symptom again.
+
 ## Comment style in this codebase
 
 Comments explain **decisions and traps**, not what the code plainly does — why a whitelist includes

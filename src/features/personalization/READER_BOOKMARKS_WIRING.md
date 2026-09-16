@@ -63,31 +63,16 @@ matching `SearchPanel.tsx`'s split) plus the wiring in `ReaderScreen.tsx`:
      chapter id / positional label exactly as a never-named one does.
    - The delete-vs-rename race a same-id UPDATE reintroduces is closed engine-side — see the
      "Real rename op" resolved item below.
-7. **The bookmarked-page badge — PURELY VISUAL, not a control.** `isCurrentPositionBookmarked` (a
-   `useMemo` over `bookmarks` and `position`, no store read of its own) drives a small corner badge
-   over the viewer, the way Word marks a bookmarked location with an icon rather than a button. It does
-   NOT open the panel and has no `onPress` — an earlier version made it a `Pressable` that opened
-   `BookmarksPanel`; the user asked for the opposite. The panel is reached from the toolbar; this is
-   only the "you are somewhere you bookmarked" cue. PDF matches by PAGE (the same granularity
-   `addCurrentPdfBookmark` writes at); EPUB matches by exact CFI, an honest narrower claim since a CFI
-   addresses a point, not a page.
-   - **Background**: a warm gold circle (`#ffd54f`) plus a shadow (`elevation` on Android), not white —
-     white-on-a-white-page barely registered. Colours are inline for the same reason the rest of this
-     screen's are (`src/theme/` has not landed).
-   - **"Page Bookmarked" tooltip, TWO triggers.** `onHoverIn`/`onHoverOut` (mouse/trackpad) — but
-     **verified against RN's own source, not assumed: this is currently INERT on every platform this
-     app ships to.** `Pressability.js`/`HoverState.js` route `Pressable`'s hover callbacks through the
-     legacy `onMouseEnter`/`onMouseLeave` path by default, and `isHoverEnabled()` is hard-coded to stay
-     `false` unless `Platform.OS === 'web'` — never on native iOS/Android, regardless of an iPad
-     trackpad or Mac Catalyst, and this app has no web target configured. It is kept anyway for if/when
-     a web target or RN's W3C Pointer Events ever apply here, and is proven today only by the Jest test
-     that calls it directly, not by anything reachable on a real device. `onLongPress`/`onPressOut` is
-     the trigger that actually works today, on a phone, an iPad, or the simulator — not `onPress`,
-     since a plain tap must stay inert, same as the rest of this badge's "not a button" behaviour.
-     Because either trigger needs the badge to actually receive touch/pointer events, it is no longer
-     `pointerEvents="none"` — the accepted tradeoff is a finger tap landing exactly on this 30x30
-     corner being swallowed rather than reaching a swipe gesture underneath it, negligible given the
-     badge's size and inset placement, and harmless either way since a plain tap still does nothing.
+7. **The bookmarked-page corner badge is REMOVED (2026-09-16), not just restyled.** It used to be a
+   small gold circle over the viewer, driven by `isCurrentPositionBookmarked` (a `useMemo` over
+   `bookmarks` and `position`, no store read of its own), with a "Page Bookmarked" tooltip on
+   long-press/hover. That signal now lives on the toolbar's own Bookmarks button instead: its icon is
+   `bookmark` (filled, `color.primary`) when `isCurrentPositionBookmarked` is true and
+   `bookmark-outline` otherwise, so "you are somewhere you bookmarked" is read off the control that
+   opens `BookmarksPanel` rather than off a second, non-interactive element. `isCurrentPositionBookmarked`
+   itself is unchanged — PDF still matches by PAGE (the same granularity `addCurrentPdfBookmark` writes
+   at), EPUB still by exact CFI. The corner badge's own dedicated test block is deleted along with it,
+   not left pinning removed behaviour.
 8. **Cross-book filtering — the real per-book scoping does it now; Reader's format filter is a
    guard.** Every call above is scoped to `bookId`, so the panel receives only the open book's rows
    and `bookmarksForOpenBook` (`ReaderScreen.tsx`) has nothing left to exclude. It was kept anyway

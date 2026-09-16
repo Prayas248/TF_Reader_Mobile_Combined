@@ -39,7 +39,7 @@ import { radius, space, weight } from '@theme/tokens';
 import { resolveFont } from '@theme/resolveFont';
 
 // The Nexus mark — transparent background, same asset TopAppBar uses.
-const NEXUS_LOGO = require('../../assets/nexus-fixed.png');
+const NEXUS_LOGO = require('../../assets/nexus-3.png');
 
 // Lifted from design/app-popup/code.html's `:root` block — this screen's own
 // palette, not the app's brand tokens. See file header.

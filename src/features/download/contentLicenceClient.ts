@@ -68,6 +68,23 @@ export async function fetchContentLicence(bookId: BookId): Promise<ContentLicenc
  * LAN-reachable host for `API_BASE_URL` (the content-licence/reading-session request that produced
  * this url succeeded via it), so reuse that HOST here.
  *
+ * EVERY OTHER WELL-KNOWN "THIS MEANS THE SERVER ITSELF" ALIAS GETS THE SAME TREATMENT AS
+ * `localhost`, for the same reason and the same failure mode: each is meaningful only inside
+ * whatever process/VM produced the url, never to a device fetching it from outside. `10.0.2.2` is
+ * the Android EMULATOR's own alias for its host machine's loopback — a presigned B2/S3 url built
+ * while the storage endpoint (or whatever produced this url) was pointed at it, e.g. left over
+ * from a prior emulator-only test run, reaches a real device as `ConnectionException: Failed to
+ * connect to /10.0.2.2:8080` — confirmed live, 2026-09-16, against a physical device on a release
+ * build. `10.0.3.2` is Genymotion's equivalent. `0.0.0.0` and IPv6 `::1`/`[::1]` are the other
+ * standard loopback spellings a misconfigured endpoint could just as easily emit.
+ *
+ * This is a fix for the whole CLASS of "the backend handed out its own idea of itself" bug, not
+ * a guarantee against every possible misconfiguration — a stale-but-real LAN IP or an unrelated
+ * wrong host is indistinguishable from a genuine CDN url from here, and rewriting on a guess would
+ * risk breaking the one case this function must never touch (see "Any other host" below). Those
+ * need fixing at the source, the same way this one was traced back to the backend's own storage
+ * endpoint config rather than patched blindly on this side alone.
+ *
  * THE HOST AND PROTOCOL, BUT NEVER THE PORT — this used to copy `base.port` too, back when the
  * mock backend served both the API and its mock asset files from the same port (4000), so copying
  * it was an unobservable no-op. It no longer is: the real backend's API is on :8080, but a signed
@@ -84,6 +101,16 @@ export async function fetchContentLicence(bookId: BookId): Promise<ContentLicenc
  *
  * Any other host is left completely alone — a real CDN url must not be rewritten.
  */
+const LOOPBACK_HOSTNAMES = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '::1',
+  '[::1]',
+  '10.0.2.2', // Android emulator's alias for its host machine
+  '10.0.3.2', // Genymotion's equivalent alias
+]);
+
 export function reachableAssetUrl(url: string): string {
   let parsed: URL;
   let base: URL;
@@ -95,7 +122,7 @@ export function reachableAssetUrl(url: string): string {
     // error be the one the caller sees, rather than inventing a different failure here.
     return url;
   }
-  if (parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') {
+  if (!LOOPBACK_HOSTNAMES.has(parsed.hostname)) {
     return url;
   }
   if (base.hostname === parsed.hostname) {

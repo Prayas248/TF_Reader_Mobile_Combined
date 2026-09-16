@@ -189,6 +189,23 @@ describe('fetchEncryptedAsset — localhost rewriting against API_BASE_URL', () 
     expect(Array.from(bytes)).toEqual([7, 8]);
   });
 
+  // Regression test, 2026-09-16: confirmed live on a physical device against a release build —
+  // `ConnectionException: Failed to connect to /10.0.2.2:8080`. That address is the Android
+  // EMULATOR's own alias for its host machine's loopback; a presigned url built while the
+  // backend's storage endpoint was pointed at it (e.g. left over from an emulator-only test run)
+  // is exactly as unreachable from a real device as a bare `localhost` url, and gets the same fix.
+  it('rewrites a 10.0.2.2 (Android emulator loopback alias) url the same way as localhost', async () => {
+    const client = loadClientWithLanBaseUrl();
+    global.fetch = jest.fn().mockResolvedValue(new Response(new Uint8Array([7, 8]), { status: 200 }));
+
+    await client.fetchEncryptedAsset('book-001', 'http://10.0.2.2:8080/test-books/sample.epub.enc?sig=abc');
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://192.168.1.20:8080/test-books/sample.epub.enc?sig=abc',
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+  });
+
   it('leaves a non-localhost (e.g. real CDN) url completely untouched', async () => {
     const client = loadClientWithLanBaseUrl();
     global.fetch = jest.fn().mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }));

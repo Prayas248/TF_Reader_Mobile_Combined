@@ -14,6 +14,7 @@ import type { DataSource } from '@adapters/InstitutionSource';
 import { PartialApiAdapter } from '@adapters/PartialApiAdapter';
 import { MockAdapter, type MockAdapterOptions } from '@adapters/MockAdapter';
 import { ensureFreshToken } from '@/auth/tokenRefresh';
+import { resolveHostForAndroidEmulator } from '@/config/androidHost';
 
 export type CatalogueSourceKind = 'mock' | 'api';
 
@@ -62,10 +63,11 @@ export function createCatalogueSource(
   const kind = options.kind ?? resolveCatalogueSourceKind(process.env.EXPO_PUBLIC_CATALOGUE_SOURCE);
 
   if (kind === 'api') {
-    const baseUrl = options.baseUrl ?? process.env.EXPO_PUBLIC_CATALOGUE_BASE_URL;
-    if (!baseUrl) {
+    const configuredBaseUrl = options.baseUrl ?? process.env.EXPO_PUBLIC_CATALOGUE_BASE_URL;
+    if (!configuredBaseUrl) {
       throw new Error(`${BASE_URL_VAR} must be set when ${ENV_VAR} is 'api'.`);
     }
+    const baseUrl = resolveHostForAndroidEmulator(configuredBaseUrl);
     // Only institutions has a real endpoint today — everything else on this
     // DataSource still comes from fixtures until more of the backend ships.
     const getToken = options.getToken ?? ensureFreshToken;

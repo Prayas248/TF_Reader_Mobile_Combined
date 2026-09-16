@@ -19,6 +19,7 @@
 
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import { resolveHostForAndroidEmulator } from '@/config/androidHost';
 
 const MOCK_BACKEND_PORT = 4000;
 // Both published contracts (wokay + flambeau) specify this exact value for everyone — see
@@ -48,9 +49,16 @@ function resolveBackendHost(): string {
   return 'localhost';
 }
 
-/** Override by setting EXPO_PUBLIC_MOCK_BACKEND_URL, e.g. http://192.168.1.20:4000 */
-const MOCK_BACKEND_URL =
-  process.env.EXPO_PUBLIC_MOCK_BACKEND_URL ?? `http://${resolveBackendHost()}:${MOCK_BACKEND_PORT}`;
+/**
+ * Override by setting EXPO_PUBLIC_MOCK_BACKEND_URL, e.g. http://192.168.1.20:4000
+ *
+ * Normalized through `resolveHostForAndroidEmulator` even when explicitly overridden — an
+ * override value copied verbatim into .env from an iOS-only setup (a literal "localhost") would
+ * otherwise bypass `resolveBackendHost()`'s own Android handling entirely.
+ */
+const MOCK_BACKEND_URL = resolveHostForAndroidEmulator(
+  process.env.EXPO_PUBLIC_MOCK_BACKEND_URL ?? `http://${resolveBackendHost()}:${MOCK_BACKEND_PORT}`,
+);
 
 /**
  * Override by setting EXPO_PUBLIC_REAL_BACKEND_URL, e.g. http://192.168.1.20:8080
@@ -65,9 +73,16 @@ const MOCK_BACKEND_URL =
  * downloaded — indistinguishable from a real outage without checking this default. iOS
  * Simulator never showed this, because it shares the host's network namespace and
  * `localhost` there really does mean the host.
+ *
+ * Also normalized through `resolveHostForAndroidEmulator` when explicitly overridden — some
+ * .env setups pin this to a literal `http://localhost:8080` on purpose (see .env's own comment:
+ * it keeps this host matching the MinIO-signed asset URL's host so `reachableAssetUrl()`'s
+ * same-host no-op branch fires). That reasoning is iOS-Simulator-specific; on Android it would
+ * silently reintroduce the exact bug this comment describes, so the swap applies unconditionally.
  */
-const REAL_BACKEND_URL =
-  process.env.EXPO_PUBLIC_REAL_BACKEND_URL ?? `http://${resolveBackendHost()}:${REAL_BACKEND_PORT}`;
+const REAL_BACKEND_URL = resolveHostForAndroidEmulator(
+  process.env.EXPO_PUBLIC_REAL_BACKEND_URL ?? `http://${resolveBackendHost()}:${REAL_BACKEND_PORT}`,
+);
 
 /** Defaults to the mock — false unless explicitly set. Flip with EXPO_PUBLIC_USE_REAL_BACKEND=true. */
 const USE_REAL_BACKEND = process.env.EXPO_PUBLIC_USE_REAL_BACKEND === 'true';

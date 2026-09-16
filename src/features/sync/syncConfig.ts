@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import { resolveHostForAndroidEmulator } from '@/config/androidHost';
 
 /**
  * Fixed prototype identity. Every local record and every synced record uses
@@ -52,9 +53,16 @@ function resolveBackendHost(): string {
   return 'localhost';
 }
 
-/** Override by setting EXPO_PUBLIC_API_URL, e.g. http://192.168.1.20:8080 */
-export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ?? `http://${resolveBackendHost()}:${BACKEND_PORT}`;
+/**
+ * Override by setting EXPO_PUBLIC_API_URL, e.g. http://192.168.1.20:8080
+ *
+ * Normalized through `resolveHostForAndroidEmulator` even when explicitly overridden, so an
+ * override copied from an iOS-only .env setup (a literal "localhost") can't silently bypass
+ * `resolveBackendHost()`'s own Android handling above.
+ */
+export const API_BASE_URL = resolveHostForAndroidEmulator(
+  process.env.EXPO_PUBLIC_API_URL ?? `http://${resolveBackendHost()}:${BACKEND_PORT}`,
+);
 
 /** Every CRUD collection lives under this prefix on the Mongo backend. */
 export const API_V1 = '/api/v1';

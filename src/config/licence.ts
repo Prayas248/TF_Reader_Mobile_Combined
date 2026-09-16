@@ -10,6 +10,7 @@
 //
 // No `if (__DEV__)` and no `useMock` anywhere above this file.
 import { ApiLicenceClient, MockLicenceClient, type LicenceSource } from '@/licence';
+import { resolveHostForAndroidEmulator } from '@/config/androidHost';
 
 export type LicenceSourceKind = 'mock' | 'api';
 
@@ -135,7 +136,7 @@ export function getLicenceSource(deps: LicenceSourceDeps = {}): LicenceSource {
   // surrounding whitespace, and the client strips trailing slashes but not spaces — so
   // an env var of " https://flambeau.tf " used to pass and then put whitespace in every
   // request URL.
-  const baseUrl = raw.trim();
+  const baseUrl = resolveHostForAndroidEmulator(raw.trim());
 
   cachedContendedItems = wanted;
   cached = new ApiLicenceClient({

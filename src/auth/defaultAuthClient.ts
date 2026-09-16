@@ -7,17 +7,19 @@
 // needs EXPO_PUBLIC_FLAMBEAU_BASE_URL set. Tests inject their own client via
 // a `deps` parameter and never reach this function.
 import { ApiAuthClient } from './ApiAuthClient';
+import { resolveHostForAndroidEmulator } from '@/config/androidHost';
 
 let cachedClient: ApiAuthClient | undefined;
 
 export function getDefaultAuthClient(): ApiAuthClient {
   if (cachedClient !== undefined) return cachedClient;
 
-  const baseUrl = process.env.EXPO_PUBLIC_FLAMBEAU_BASE_URL;
-  if (baseUrl === undefined || baseUrl.trim() === '') {
+  const configuredBaseUrl = process.env.EXPO_PUBLIC_FLAMBEAU_BASE_URL;
+  if (configuredBaseUrl === undefined || configuredBaseUrl.trim() === '') {
     throw new Error('EXPO_PUBLIC_FLAMBEAU_BASE_URL must be set.');
   }
 
-  cachedClient = new ApiAuthClient({ baseUrl: baseUrl.trim() });
+  const baseUrl = resolveHostForAndroidEmulator(configuredBaseUrl.trim());
+  cachedClient = new ApiAuthClient({ baseUrl });
   return cachedClient;
 }

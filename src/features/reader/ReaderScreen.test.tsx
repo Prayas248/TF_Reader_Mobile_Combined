@@ -27,8 +27,11 @@
 // coverage in wholeBookBudget.test.ts. Only the seams are mocked, never the logic
 // under test.
 
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
+
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { color } from '@theme/tokens';
 
 import { closeBook, getIndex } from '@/features/encryption/contentProvider';
 import { loadDyslexiaFontFaceSrc } from '@/features/accessibility/dyslexiaFontLoader';
@@ -2923,222 +2926,78 @@ describe('ReaderScreen bookmarks panel', () => {
       expect(screen.queryByText('Foreign EPUB spot')).toBeNull();
     });
   });
-});
 
-describe('ReaderScreen bookmark badge', () => {
-  beforeEach(() => {
-    jest.mocked(loadBookmarks).mockReset().mockResolvedValue({ bookmarks: [], skippedIds: [] });
-    // See the identical reset in "ReaderScreen bookmarks panel" — `bookmarksForOpenBook` filters by
-    // `format`, so a PDF override left behind by an earlier test would filter out every EPUB-shaped
-    // `bookmark()` fixture below unless this describe block starts from a known format each time.
-    jest.mocked(prepareBook).mockResolvedValue('EPUB');
-  });
+  describe('the toolbar bookmark icon', () => {
+    // The corner badge that used to carry this signal is REMOVED (2026-09-16) — see
+    // READER_BOOKMARKS_WIRING.md item 7. The toolbar's own Bookmarks icon now carries it instead:
+    // filled, in the brand blue, exactly when `isCurrentPositionBookmarked` is true.
+    //
+    // RNTL v14 only renders host elements (no `UNSAFE_getByType`), and `name`/`color` never reach
+    // the underlying `Text` node as their own props — Ionicons resolves `name` to a private-use-area
+    // glyph character and folds `color` into `style` before spreading onto `Text`. So icon IDENTITY
+    // is asserted by the rendered glyph text (via Ionicons' own `getRawGlyphMap`), and icon COLOUR by
+    // the flattened style, rather than by inspecting `props.name`/`props.color` directly.
+    function glyphFor(name: 'bookmark' | 'bookmark-outline'): string {
+      const glyph = Ionicons.getRawGlyphMap()[name];
+      return typeof glyph === 'number' ? String.fromCodePoint(glyph) : String(glyph);
+    }
 
-  function bookmark(overrides: Partial<ReaderBookmark> = {}): ReaderBookmark {
-    return {
-      id: 'b1',
-      label: 'Chapter 1',
-      target: { kind: 'href', href: 'epubcfi(/6/4[chap01]!/4/2/2)' },
-      ...overrides,
-    };
-  }
+    function bookmarksButton() {
+      return within(screen.getByRole('button', { name: 'Bookmarks' }));
+    }
 
-  it('shows no badge until the current position matches a stored bookmark', async () => {
-    jest.mocked(loadBookmarks).mockResolvedValue({
-      bookmarks: [bookmark({ target: { kind: 'href', href: 'epubcfi(/6/10)' } })],
-      skippedIds: [],
-    });
-    await mountReader();
-    await deliver({ type: 'rendered' });
+    it('is outline with no explicit colour when the current position is not bookmarked', async () => {
+      await mountReader();
+      await deliver({ type: 'rendered' });
 
-    expect(screen.queryByTestId('reader-bookmark-badge')).toBeNull();
-
-    // A DIFFERENT CFI — same book, not the bookmarked spot.
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'cfi', cfi: 'epubcfi(/6/20)' },
-      atStart: false,
-      atEnd: false,
-    });
-    expect(screen.queryByTestId('reader-bookmark-badge')).toBeNull();
-
-    // The EXACT bookmarked CFI.
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'cfi', cfi: 'epubcfi(/6/10)' },
-      atStart: false,
-      atEnd: false,
-    });
-    expect(screen.getByTestId('reader-bookmark-badge')).toBeTruthy();
-  });
-
-  it('matches a PDF bookmark by page, not by exact locator', async () => {
-    jest.mocked(prepareBook).mockResolvedValue('PDF');
-    jest.mocked(getReaderHtmlUri).mockResolvedValue('file:///reader-pdf.html');
-    jest.mocked(getBookBase64).mockResolvedValue('JVBERi0xLjQK');
-    jest.mocked(loadBookmarks).mockResolvedValue({
-      bookmarks: [bookmark({ target: { kind: 'page', page: 12 } })],
-      skippedIds: [],
-    });
-    await mountReader();
-    await deliver({ type: 'rendered' });
-
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'page', page: 5, pageCount: 100 },
-      atStart: false,
-      atEnd: false,
-    });
-    expect(screen.queryByTestId('reader-bookmark-badge')).toBeNull();
-
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'page', page: 12, pageCount: 100 },
-      atStart: false,
-      atEnd: false,
-    });
-    expect(screen.getByTestId('reader-bookmark-badge')).toBeTruthy();
-  });
-
-  it('is purely visual — tapping it does not open the panel or navigate', async () => {
-    // THE WHOLE POINT: an earlier version made this a Pressable that opened BookmarksPanel. The
-    // user asked for the opposite — a marker like Word's, not a control — so this pins that
-    // pressing it does nothing, and it is not even findable by button role.
-    jest.mocked(loadBookmarks).mockResolvedValue({
-      bookmarks: [
-        bookmark({ label: 'Here', target: { kind: 'href', href: 'epubcfi(/6/4[chap01]!/4/2/2)' } }),
-      ],
-      skippedIds: [],
-    });
-    await mountReader();
-    await deliver({ type: 'rendered' });
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'cfi', cfi: 'epubcfi(/6/4[chap01]!/4/2/2)' },
-      atStart: false,
-      atEnd: false,
+      const icon = bookmarksButton().getByText(glyphFor('bookmark-outline'));
+      expect(StyleSheet.flatten(icon.props.style).color).toBeUndefined();
     });
 
-    // An image, not a button — only the toolbar's own "Bookmarks" toggle is a button.
-    expect(screen.getByTestId('reader-bookmark-badge').props.accessibilityRole).toBe('image');
+    it('fills in, in blue, once the current position matches a stored bookmark', async () => {
+      jest.mocked(loadBookmarks).mockResolvedValue({
+        bookmarks: [bookmark({ target: { kind: 'href', href: 'epubcfi(/6/10)' } })],
+        skippedIds: [],
+      });
+      await mountReader();
+      await deliver({ type: 'rendered' });
+      await relocateCfi('epubcfi(/6/10)');
 
-    await fireEvent.press(screen.getByTestId('reader-bookmark-badge'));
-
-    expect(screen.queryByText('Here')).toBeNull();
-    expect(screen.getByTestId('reader-bookmark-badge')).toBeTruthy();
-  });
-
-  it('shows a "Page Bookmarked" tooltip via onHoverIn/onHoverOut', async () => {
-    // THIS PROVES THE STATE TRANSITION, NOT THAT A REAL HOVER CAN REACH IT ON THIS APP TODAY.
-    // Checked against RN's own source (Pressability.js/HoverState.js): with this RN version's default
-    // feature flags, Pressable's hover callbacks route through the legacy onMouseEnter/onMouseLeave
-    // path, and HoverState.isHoverEnabled() is hard-coded to stay false unless Platform.OS === 'web'
-    // — never on native iOS/Android, regardless of an iPad trackpad or Mac Catalyst. This app has no
-    // web target configured. `onLongPress`, tested below, is the trigger that actually fires on a
-    // phone, an iPad, or the simulator right now.
-    jest.mocked(loadBookmarks).mockResolvedValue({
-      bookmarks: [bookmark({ target: { kind: 'href', href: 'epubcfi(/6/4[chap01]!/4/2/2)' } })],
-      skippedIds: [],
-    });
-    await mountReader();
-    await deliver({ type: 'rendered' });
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'cfi', cfi: 'epubcfi(/6/4[chap01]!/4/2/2)' },
-      atStart: false,
-      atEnd: false,
+      const icon = bookmarksButton().getByText(glyphFor('bookmark'));
+      expect(StyleSheet.flatten(icon.props.style).color).toBe(color.primary);
     });
 
-    expect(screen.queryByText('Page Bookmarked')).toBeNull();
+    it('reverts to outline when a pulled change removes the matching bookmark, with no reopen', async () => {
+      // Replaces the deleted badge's own version of this test — the reload path
+      // (`subscribeToBookmarkChanges`) is unchanged, only what renders off its result moved.
+      let pulledChangeListener: (() => void) | undefined;
+      jest.mocked(subscribeToBookmarkChanges).mockImplementation((listener) => {
+        pulledChangeListener = listener;
+        return () => {
+          pulledChangeListener = undefined;
+        };
+      });
 
-    await fireEvent(screen.getByTestId('reader-bookmark-badge'), 'hoverIn');
-    expect(screen.getByText('Page Bookmarked')).toBeTruthy();
+      jest.mocked(loadBookmarks).mockResolvedValueOnce({
+        bookmarks: [bookmark({ target: { kind: 'href', href: 'epubcfi(/6/10)' } })],
+        skippedIds: [],
+      });
+      await mountReader();
+      await deliver({ type: 'rendered' });
+      await relocateCfi('epubcfi(/6/10)');
 
-    await fireEvent(screen.getByTestId('reader-bookmark-badge'), 'hoverOut');
-    expect(screen.queryByText('Page Bookmarked')).toBeNull();
-  });
+      expect(bookmarksButton().getByText(glyphFor('bookmark'))).toBeTruthy();
 
-  it('shows the same tooltip on a long-press, and hides it when the press ends', async () => {
-    // THE TRIGGER THAT ACTUALLY WORKS ON A TOUCHSCREEN, unlike hover — see the note above.
-    jest.mocked(loadBookmarks).mockResolvedValue({
-      bookmarks: [bookmark({ target: { kind: 'href', href: 'epubcfi(/6/4[chap01]!/4/2/2)' } })],
-      skippedIds: [],
+      jest.mocked(loadBookmarks).mockResolvedValueOnce({ bookmarks: [], skippedIds: [] });
+      await act(async () => {
+        pulledChangeListener?.();
+        await Promise.resolve();
+      });
+
+      expect(bookmarksButton().getByText(glyphFor('bookmark-outline'))).toBeTruthy();
+
+      jest.mocked(subscribeToBookmarkChanges).mockReset().mockReturnValue(() => {});
     });
-    await mountReader();
-    await deliver({ type: 'rendered' });
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'cfi', cfi: 'epubcfi(/6/4[chap01]!/4/2/2)' },
-      atStart: false,
-      atEnd: false,
-    });
-
-    await fireEvent(screen.getByTestId('reader-bookmark-badge'), 'longPress');
-    expect(screen.getByText('Page Bookmarked')).toBeTruthy();
-
-    await fireEvent(screen.getByTestId('reader-bookmark-badge'), 'pressOut');
-    expect(screen.queryByText('Page Bookmarked')).toBeNull();
-  });
-
-  it('a plain tap (pressOut with no long-press) never shows the tooltip', async () => {
-    // Guards the distinction onLongPress exists to make: a quick tap must stay inert, same as the
-    // rest of this badge's "not a button" behaviour.
-    jest.mocked(loadBookmarks).mockResolvedValue({
-      bookmarks: [bookmark({ target: { kind: 'href', href: 'epubcfi(/6/4[chap01]!/4/2/2)' } })],
-      skippedIds: [],
-    });
-    await mountReader();
-    await deliver({ type: 'rendered' });
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'cfi', cfi: 'epubcfi(/6/4[chap01]!/4/2/2)' },
-      atStart: false,
-      atEnd: false,
-    });
-
-    await fireEvent.press(screen.getByTestId('reader-bookmark-badge'));
-
-    expect(screen.queryByText('Page Bookmarked')).toBeNull();
-  });
-
-  it('reloads and hides the badge when a pulled change removes the bookmark, with no reopen', async () => {
-    // The gap `bookmarkStore.subscribe`'s own doc names: a delete made on another device, or
-    // directly against the backend, must reach an already-open panel — not wait for this book to
-    // be reopened before the badge catches up.
-    let pulledChangeListener: (() => void) | undefined;
-    jest.mocked(subscribeToBookmarkChanges).mockImplementation((listener) => {
-      pulledChangeListener = listener;
-      return () => {
-        pulledChangeListener = undefined;
-      };
-    });
-
-    jest.mocked(loadBookmarks).mockResolvedValueOnce({
-      bookmarks: [bookmark({ target: { kind: 'href', href: 'epubcfi(/6/10)' } })],
-      skippedIds: [],
-    });
-    await mountReader();
-    await deliver({ type: 'rendered' });
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'cfi', cfi: 'epubcfi(/6/10)' },
-      atStart: false,
-      atEnd: false,
-    });
-
-    expect(screen.getByTestId('reader-bookmark-badge')).toBeTruthy();
-
-    // Simulate a pull that soft-deleted this exact bookmark on another device: the NEXT load
-    // this triggers comes back without it.
-    jest.mocked(loadBookmarks).mockResolvedValueOnce({ bookmarks: [], skippedIds: [] });
-    await act(async () => {
-      pulledChangeListener?.();
-      await Promise.resolve();
-    });
-
-    expect(screen.queryByTestId('reader-bookmark-badge')).toBeNull();
-
-    jest.mocked(subscribeToBookmarkChanges).mockReset().mockReturnValue(() => {});
   });
 });
 
@@ -3330,44 +3189,11 @@ describe('TTS is driven by the preference, not by a button in the reader', () =>
 
       const cue = screen.getByTestId('reader-tts-cue');
       // No press handlers at all, and pointer events off, so it cannot eat a swipe meant for the
-      // page underneath it. This is the whole difference from the bookmark badge, which does take
-      // touches for its tooltip.
+      // page underneath it.
       expect(cue.props.onPress).toBeUndefined();
       expect(cue.props.onLongPress).toBeUndefined();
       expect(cue.props.pointerEvents).toBe('none');
       expect(cue.props.accessibilityRole).toBe('image');
-    });
-
-    it('drops below the bookmark badge when both are on screen, rather than over it', async () => {
-      jest.mocked(loadBookmarks).mockResolvedValue({
-        bookmarks: [
-          {
-            id: 'b1',
-            label: 'Chapter 1',
-            target: { kind: 'href', href: 'epubcfi(/6/4[chap01]!/4/2/2)' },
-          },
-        ],
-        skippedIds: [],
-      });
-      await mountReader();
-      await reportReady();
-      await deliver({ type: 'rendered' });
-      await setTtsPref(true);
-      await startSpeaking();
-
-      // Not bookmarked yet: the cue takes the corner itself.
-      expect(StyleSheet.flatten(screen.getByTestId('reader-tts-cue').props.style).top).toBe(8);
-
-      await deliver({
-        type: 'relocated',
-        position: { kind: 'cfi', cfi: 'epubcfi(/6/4[chap01]!/4/2/2)' },
-        atStart: false,
-        atEnd: false,
-      });
-
-      expect(screen.getByTestId('reader-bookmark-badge')).toBeTruthy();
-      // 8 (badge top) + 32 (badge height) + 8 (gap) — clears it exactly.
-      expect(StyleSheet.flatten(screen.getByTestId('reader-tts-cue').props.style).top).toBe(48);
     });
   });
 

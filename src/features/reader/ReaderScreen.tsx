@@ -26,6 +26,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import Spinner from '@components/Spinner';
@@ -623,26 +624,6 @@ function ReaderScreenComponent(
   const [unpaintedMatchKey, setUnpaintedMatchKey] = useState<string | null>(null);
 
   /**
-   * Whether the "Page Bookmarked" tooltip should show, driven by TWO independent triggers:
-   *
-   * 1. `onHoverIn`/`onHoverOut` — a real mouse/trackpad hover. VERIFIED AGAINST RN's OWN SOURCE
-   *    (`node_modules/react-native/Libraries/Pressability/{Pressability,HoverState}.js`), not assumed:
-   *    with this RN version's default feature flags, `Pressable`'s hover callbacks route through the
-   *    legacy `onMouseEnter`/`onMouseLeave` path, and `HoverState.isHoverEnabled()` is hard-coded to
-   *    stay `false` unless `Platform.OS === 'web'` — it is NEVER set on native iOS/Android, regardless
-   *    of an iPad trackpad, Apple Pencil hover, or Mac Catalyst. So on every platform this app
-   *    currently ships to, this trigger is inert; it exists for if/when this app gets a web target, or
-   *    RN turns on real W3C Pointer Events for hover, and is otherwise proven only by the Jest test
-   *    that calls it directly.
-   * 2. `onLongPress`/`onPressOut` — a press-and-hold, which IS a real touch gesture and the one that
-   *    actually shows this on a phone, an iPad, or the simulator today. Not `onPress`: a plain tap
-   *    must stay inert (see the badge's own note on why it is not a button), so revealing the tooltip
-   *    needs a deliberately longer gesture than a tap, the same distinction iOS's own "peek" pattern
-   *    makes.
-   */
-  const [showBookmarkTooltip, setShowBookmarkTooltip] = useState(false);
-
-  /**
    * TTS is EPUB-only (readerTextProvider.ts's segmentation model is CFI-based) and gated on
    * Accessibility's one exported boolean — `useTtsEnabled()` is deliberately the ONLY check;
    * `useTtsSession`'s `play()` does not re-check it, on the grounds that mounting the controls IS
@@ -1159,6 +1140,12 @@ function ReaderScreenComponent(
 
   const tearDownAndLock = useCallback(
     (code: ReaderErrorCode, message: string): void => {
+      // Re-entry guard: the bus push (`useContentLock`) and the poll (`startAccessMonitor`) can
+      // both call this for the same revocation, per the class doc comment above — every other
+      // line here already tolerates that (re-setting a ref, stopping an already-stopped monitor,
+      // a caught `closeBook`), but `onLocked` is contracted to fire ONCE, so it alone needs the
+      // guard the rest of this function doesn't.
+      const alreadyLocked = lockedRef.current;
       lockedRef.current = true;
       setLocked(true);
       accessMonitorRef.current?.stop();
@@ -1173,7 +1160,7 @@ function ReaderScreenComponent(
       clearSearch();
       void closeBook(bookId).catch(() => {});
       raiseError(code, message);
-      onLocked?.(code, message);
+      if (!alreadyLocked) onLocked?.(code, message);
     },
     [bookId, raiseError, clearSearch, onLocked],
   );
@@ -2440,7 +2427,7 @@ function ReaderScreenComponent(
           }}
           style={styles.toolbarButton}
         >
-          <Text style={styles.toolbarIcon}>🔍</Text>
+          <Ionicons name="search-outline" style={styles.toolbarIcon} />
         </Pressable>
 
         <Pressable
@@ -2455,7 +2442,10 @@ function ReaderScreenComponent(
           }}
           style={styles.toolbarButton}
         >
-          <Text style={styles.toolbarIcon}>🔖</Text>
+          <Ionicons
+            name={isCurrentPositionBookmarked ? 'bookmark' : 'bookmark-outline'}
+            style={[styles.toolbarIcon, isCurrentPositionBookmarked && styles.toolbarIconBookmarked]}
+          />
         </Pressable>
 
         {/* NOT GATED ON `format`, unlike the panel's own Dyslexia Font row: High Contrast and
@@ -2513,7 +2503,7 @@ function ReaderScreenComponent(
           }}
           style={styles.toolbarButton}
         >
-          <Text style={styles.toolbarIcon}>♿</Text>
+          <Ionicons name="accessibility-outline" style={styles.toolbarIcon} />
         </Pressable>
 
         {/* LAST child, deliberately — see `toolbarExtra`'s own prop doc for why that makes this
@@ -2581,80 +2571,10 @@ function ReaderScreenComponent(
         )}
 
         {/*
-          THE BOOKMARK BADGE — a PURELY VISUAL marker, the way Word marks a bookmarked location with
-          an icon in the margin rather than a control: it does not open the panel, does not toggle
-          anything, and is not a button — there is no `onPress`. Confirmed with the user rather than
-          assumed — an earlier version made this tappable (opening BookmarksPanel), which is the wrong
-          affordance here; the panel is reached from the toolbar, this is only the "you are somewhere
-          you bookmarked" cue. Long-press reveals a "Page Bookmarked" tooltip; a plain tap still does
-          nothing, which is the point of using `onLongPress` rather than `onPress` for that.
-
-          `accessibilityRole="image"`, NOT `accessibilityElementsHidden` — unlike the swipe catcher and
-          the privacy cover just below (which really are inert chrome with nothing to announce), this
-          DOES carry information a screen reader user needs ("you are somewhere you bookmarked"), so it
-          stays discoverable and announced; only its non-interactivity is what changed.
-
-          NO `pointerEvents="none"` HERE, UNLIKE THE FIRST VERSION — both triggers need this View to
-          actually receive touch/pointer events. The tradeoff: a finger tap landing exactly on this
-          30x30 corner is swallowed rather than reaching a swipe gesture underneath it — accepted as
-          negligible given the badge's size and inset placement, and a plain tap still does nothing
-          either way (no `onPress`).
-
-          A small corner ribbon, not a full-width banner, and deliberately inset from both edges
-          rather than flush into the corner: a book's own typography already keeps its top margin
-          clear, so an 8pt inset small badge sits in that margin rather than over the text underneath
-          it. Rendered BEFORE isBusy/every panel below, so it is naturally hidden behind them by RN's
-          sibling z-order the same way the swipe catcher's own note describes — no zIndex needed, and
-          none is set, to stay consistent with how the rest of this screen stacks overlays.
-        */}
-        {isCurrentPositionBookmarked && (
-          // Hidden with the rest of the background: this is announced (`accessibilityRole="image"`,
-          // not `accessibilityElementsHidden` — see its note below), so unlike the truly decorative
-          // overlays it WOULD be a stop behind an open panel.
-          <View
-            style={styles.bookmarkBadgeWrap}
-            accessibilityElementsHidden={anyPanelOpen}
-            importantForAccessibility={anyPanelOpen ? 'no-hide-descendants' : 'yes'}
-          >
-            <Pressable
-              testID="reader-bookmark-badge"
-              accessibilityRole="image"
-              accessibilityLabel="This page is bookmarked"
-              onHoverIn={() => {
-                setShowBookmarkTooltip(true);
-              }}
-              onHoverOut={() => {
-                setShowBookmarkTooltip(false);
-              }}
-              onLongPress={() => {
-                setShowBookmarkTooltip(true);
-              }}
-              onPressOut={() => {
-                // Also the natural end of a plain (non-long) tap — harmless no-op there, since the
-                // tooltip was never shown by one.
-                setShowBookmarkTooltip(false);
-              }}
-              style={styles.bookmarkBadge}
-            >
-              <Text style={styles.bookmarkBadgeIcon}>🔖</Text>
-            </Pressable>
-
-            {/* `pointerEvents="none"`: a tooltip must never be what a pointer is hovering OVER, or
-                moving onto it would fire the badge's own onHoverOut and make it flicker. */}
-            {showBookmarkTooltip && (
-              <View style={styles.bookmarkTooltip} pointerEvents="none">
-                <Text style={styles.bookmarkTooltipText}>Page Bookmarked</Text>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/*
           THE "READING ALOUD" CUE. Purely a visual state indicator: no `onPress`, no `onLongPress`,
           and `pointerEvents="none"` so it cannot swallow a tap or a swipe meant for the page under
-          it — unlike the bookmark badge above, which has to receive touches for its tooltip. TTS is
-          driven from the transport panel and from the preference; this only reports that it is
-          running.
+          it. TTS is driven from the transport panel and from the preference; this only reports that
+          it is running.
 
           WHAT IT HONESTLY MEANS: "this book is being read aloud right now", anchored on the page
           so the state is visible where the user is looking. It does NOT mean "the sentence being
@@ -2667,9 +2587,6 @@ function ReaderScreenComponent(
           Gated on 'speaking' alone, not 'paused': paused keeps the highlight but nothing is being
           read, and a speaker icon over a silent book is the kind of indicator people learn to
           distrust.
-
-          STACKED BELOW THE BOOKMARK BADGE when both are showing — see `ttsCueWrap`'s own note for
-          why the offset is computed rather than left to flow.
         */}
         {ttsSession.status === 'speaking' && (
           <View
@@ -2677,10 +2594,10 @@ function ReaderScreenComponent(
             accessibilityRole="image"
             accessibilityLabel="Reading aloud"
             pointerEvents="none"
-            // Announced, so it needs hiding behind a panel for the same reason the badge does.
+            // Announced, so it needs hiding behind a panel, same as the toolbar itself.
             accessibilityElementsHidden={anyPanelOpen}
             importantForAccessibility={anyPanelOpen ? 'no-hide-descendants' : 'yes'}
-            style={[styles.ttsCueWrap, isCurrentPositionBookmarked && styles.ttsCueBelowBookmark]}
+            style={styles.ttsCueWrap}
           >
             <Text style={styles.ttsCueIcon}>🔊</Text>
           </View>
@@ -3293,6 +3210,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.card,
   },
   toolbarIcon: { fontSize: 20 },
+  // Ultramarine (`color.primary`) — the same brand blue used for active tabs/links elsewhere, so a
+  // bookmarked page reads as an active state rather than an arbitrary accent (CONVENTIONS §5).
+  toolbarIconBookmarked: { color: color.primary },
 
   highlightNoticeWrap: { position: 'absolute', left: 8, right: 8, bottom: 8, alignItems: 'center' },
   // Clears the match bar (bottom 12, ~48 tall) so the two never overlap.
@@ -3315,54 +3235,8 @@ const styles = StyleSheet.create({
   busy: { ...FILL, alignItems: 'center', justifyContent: 'center' },
   busyText: { marginTop: 8, fontSize: 13, color: color.textSecondary },
 
-  // Inset from both edges, deliberately — see the note at the JSX for why this stays clear of the
-  // text. Positioned on the WRAP, not the badge itself, so the tooltip below can be a normal sibling
-  // laid out relative to it rather than a second independently-positioned absolute element.
-  bookmarkBadgeWrap: { position: 'absolute', top: 8, right: 8, alignItems: 'flex-end' },
-  // Saffron (`color.wait`) — the only warm/gold token the brand palette has, so the badge still
-  // reads as a DIFFERENT surface from the page underneath it at a glance, on both the light and
-  // (eventually) dark reading themes. The shadow does the same job on Android, where a flat gold
-  // circle over a busy page can still blend in without one; `elevation` is Android's equivalent of
-  // the iOS shadow* props below it.
-  //
-  // NOTE: the brand palette only exposes one Saffron shade as a token (`color.wait`), not the
-  // lighter/darker tints named in the brand guide's own secondary palette — so fill and border
-  // share one token instead of the two-tone gold this badge had before. Flagging rather than
-  // inventing an untracked hex for the missing shade (CONVENTIONS §5).
-  bookmarkBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: color.wait,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: color.wait,
-    shadowColor: color.navy,
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 3,
-  },
-  bookmarkBadgeIcon: { fontSize: 15 },
-
-  // Indigo (`color.navy`) rather than matching the badge's own gold, so it reads as a SEPARATE
-  // floating label (the standard tooltip convention) instead of an extension of the badge shape.
-  // `alignSelf` on the wrap keeps this right-aligned under the badge regardless of the tooltip's
-  // own text width.
-  bookmarkTooltip: {
-    marginTop: 6,
-    backgroundColor: 'rgba(0, 34, 68, 0.92)',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  bookmarkTooltipText: { color: color.white, fontSize: 12, fontWeight: '700' },
-
-  // SAME CORNER AS THE BOOKMARK BADGE, and deliberately its own absolute element rather than a
-  // second child of `bookmarkBadgeWrap`. Sharing that wrap would put this in normal flow under the
-  // "Page Bookmarked" tooltip, so the cue would jump down 24pt every time the tooltip appeared and
-  // back when it went. An explicit offset costs one style and never moves.
+  // Its own absolute element, inset from both edges the same way the removed bookmark badge was —
+  // see the JSX's own note for why the page's top margin is where this belongs.
   ttsCueWrap: {
     position: 'absolute',
     top: 8,
@@ -3372,10 +3246,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    // Cornflower tint (`color.subscriptionTint`) against the badge's warm gold: the two can be on
-    // screen at once, and colour is what separates "you bookmarked this" from "this is being read
-    // aloud" at a glance. Border is `color.subscription`, the saturated blue that tint is meant to
-    // sit against.
+    // Cornflower tint (`color.subscriptionTint`) / `color.subscription` border — the saturated blue
+    // that tint is meant to sit against, distinct from the toolbar's own bookmark blue.
     backgroundColor: color.subscriptionTint,
     borderWidth: 1,
     borderColor: color.subscription,
@@ -3385,10 +3257,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 3,
   },
-  // 8 (badge top) + 32 (badge height) + 8 (gap) — clears the bookmark badge exactly, so the two
-  // read as a column rather than a collision. Applied only while the badge is actually showing;
-  // otherwise the cue takes the corner itself rather than floating below an empty slot.
-  ttsCueBelowBookmark: { top: 48 },
   ttsCueIcon: { fontSize: 15 },
 
   errorBanner: {

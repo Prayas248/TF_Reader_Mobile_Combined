@@ -244,7 +244,7 @@ export default function SearchScreen() {
   const openSheet = useCallback(() => {
     setDraftFilters(search.filters);
     setSheetVisible(true);
-  }, [search.filters]);
+  }, [search.filters, setDraftFilters, setSheetVisible]);
 
   // Both setters fire in one synchronous handler, so React batches them into
   // one re-render and the reducer threads them correctly — see
@@ -255,14 +255,14 @@ export default function SearchScreen() {
     setSheetVisible(false);
     search.onSelectContentType(draftFilters.contentType);
     search.onSelectAccessTier(draftFilters.accessTier);
-  }, [draftFilters, search]);
+  }, [draftFilters, search, setSheetVisible]);
 
   const clearAllFilters = useCallback(() => {
     setDraftFilters({});
     setSheetVisible(false);
     search.onSelectContentType(undefined);
     search.onSelectAccessTier(undefined);
-  }, [search]);
+  }, [search, setDraftFilters, setSheetVisible]);
 
   const state: SearchStatus = search.state;
   const hasResults = search.publications.length > 0;

@@ -56,7 +56,13 @@ export interface CreateSearchPipelineOptions {
 export function createSearchPipeline(
   options: CreateSearchPipelineOptions = {},
 ): CatalogueSearchPipeline {
-  const kind = options.kind ?? resolveSearchPipelineKind(process.env[ENV_VAR]);
+  // Must be static `process.env.EXPO_PUBLIC_SEARCH_PIPELINE`, not a computed
+  // `process.env[ENV_VAR]` access — Expo's babel plugin only replaces the
+  // former with its build-time value. The computed form survives untouched
+  // into the release bundle, where there is no real `process.env` to read at
+  // runtime, so it silently evaluated to `undefined` and fell back to the
+  // fixture pipeline on every release build regardless of the configured env.
+  const kind = options.kind ?? resolveSearchPipelineKind(process.env.EXPO_PUBLIC_SEARCH_PIPELINE);
 
   if (kind === 'api') {
     return new ApiSearchPipeline({
