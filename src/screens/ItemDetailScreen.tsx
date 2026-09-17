@@ -945,28 +945,41 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
       } else if (action === 'read' || action === 'play') {
         // `play` is `read` relabelled for an AUDIO item, not a second
         // entitlement (see `ACTION_IDS`'s own note and this file's remap in
-        // `renderBookContent`) — both open the same way. `openBook` decrypts
-        // and stages the content locally; only once that resolves does this
-        // navigate to the real reader/player, so a refused or failed open
-        // never lands the reader on a screen with nothing to show.
+        // `renderBookContent`) — both open the same way, EXCEPT for the
+        // pre-check below, which AUDIO now skips.
         if (detail === null) return;
         const { format } = detail;
         if (format === undefined) return;
+
+        // AUDIO opens the audio player, not the EPUB/PDF reader — the two are separate screens
+        // (AudioPlayerRouteScreen vs ReaderRouteScreen) with unrelated implementations
+        // underneath (expo-audio vs the epub.js/pdf.js WebView bridge).
+        //
+        // NO openBook() PRE-CHECK HERE, DELIBERATELY — this used to call openBook() first,
+        // purely to gate navigation on whether opening would succeed, then throw the result
+        // away and navigate. Harmless for EPUB/PDF. For a copy-limited ELITE audiobook it is
+        // not: that pre-check call claims a REAL copy-lease slot on the backend
+        // (ReadBrokerService's lease.claim), and AudioPlayerScreen's own
+        // audioAssetResolver.resolveAudioAssetUri() immediately claims a SECOND one to actually
+        // play it — a single tap could claim and waste an ELITE title's entire copy budget by
+        // itself (confirmed: a 2-copy title showing "Couldn't load this title,
+        // NO_COPIES_AVAILABLE" inside the player on the very next tap). AudioPlayerScreen
+        // already has its own error screen for a real failure, so this pre-check added nothing
+        // for AUDIO except the double-claim cost.
+        if (format === 'AUDIO') {
+          setLicenceMessage(undefined);
+          navigation.navigate('AudioPlayer', { bookId: itemId as BookId, title: detail.title });
+          return;
+        }
+
+        // `openBook` decrypts and stages the content locally; only once that resolves does this
+        // navigate to the real reader, so a refused or failed open never lands the reader on a
+        // screen with nothing to show.
         setLicenceMessage(undefined);
         setPendingAction(action);
         openBook(itemId as BookId, format)
           .then(() => {
-            // AUDIO opens the audio player, not the EPUB/PDF reader — the two
-            // are separate screens (AudioPlayerRouteScreen vs
-            // ReaderRouteScreen) with unrelated implementations underneath
-            // (expo-audio vs the epub.js/pdf.js WebView bridge), and pushing
-            // an audiobook into 'Reader' fed it content the WebView bridge
-            // cannot parse.
-            if (format === 'AUDIO') {
-              navigation.navigate('AudioPlayer', { bookId: itemId as BookId, title: detail.title });
-            } else {
-              navigation.navigate('Reader', { bookId: itemId as BookId, format });
-            }
+            navigation.navigate('Reader', { bookId: itemId as BookId, format });
           })
           .catch((err: unknown) => {
             console.error('[read] openBook failed:', err);

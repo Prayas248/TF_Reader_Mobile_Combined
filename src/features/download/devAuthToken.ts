@@ -17,6 +17,7 @@
 // token source exists — same removal shape as devContentSeed.ts.
 
 import { API_BASE_URL } from './config';
+import { generateDeviceKeypair, publicKeyFingerprint } from '../encryption/deviceKeypair';
 
 interface CachedToken {
   token: string;
@@ -31,8 +32,28 @@ let cached: CachedToken | null = null;
 // class of flaky failure.
 const REFRESH_SKEW_MS = 30_000;
 
+// The real dev-token endpoint (tf_reader_backend_temp's TempDevAuthController) defaults `userId`
+// to the SAME shared `usr_dev123` for every caller that omits it — every device and every
+// teammate testing against this backend was colliding on that one account's identity, including
+// its per-user ELITE device cap (5, DeviceCapService) and its sync namespace. The seed data
+// starts that shared account 4/5 full specifically so a manual tester could immediately exercise
+// the cap, and it is now exhausted for good (no self-heal on retry, only a 90-day stale-device
+// prune). Deriving userId from this device's own already-stable key fingerprint
+// (deviceKeypair.ts, also used for the anti-key-substitution check) gives each physical device
+// its own account instead, at no extra cost — the fingerprint already exists and is already
+// stable across app restarts.
+async function devUserId(): Promise<string> {
+  const { publicKey } = await generateDeviceKeypair();
+  const fingerprint = await publicKeyFingerprint(publicKey);
+  return `dev-${fingerprint.replace('sha256:', '')}`;
+}
+
 async function fetchDevToken(): Promise<CachedToken> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/dev-token`, { method: 'POST' });
+  const userId = await devUserId();
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/auth/dev-token?userId=${encodeURIComponent(userId)}`,
+    { method: 'POST' },
+  );
   if (!response.ok) {
     throw new Error(`POST /api/v1/auth/dev-token responded ${response.status}`);
   }

@@ -14,6 +14,7 @@
 // shape as download/devAuthToken.ts.
 
 import { API_BASE_URL } from './syncConfig';
+import { generateDeviceKeypair, publicKeyFingerprint } from '../encryption/deviceKeypair';
 
 interface CachedToken {
   token: string;
@@ -25,8 +26,24 @@ let cached: CachedToken | null = null;
 // Refetch a little before the token's real expiry — see download/devAuthToken.ts's identical note.
 const REFRESH_SKEW_MS = 30_000;
 
+// Same fix, same reasoning as download/devAuthToken.ts's identical helper (duplicated rather than
+// imported — see this file's header on sync/download keeping separately owned configs): the real
+// dev-token endpoint defaults `userId` to the shared `usr_dev123` for every caller that omits it,
+// so every device/teammate was colliding on one sync namespace. Deriving userId from this
+// device's own already-stable key fingerprint gives each physical device its own identity
+// instead.
+async function devUserId(): Promise<string> {
+  const { publicKey } = await generateDeviceKeypair();
+  const fingerprint = await publicKeyFingerprint(publicKey);
+  return `dev-${fingerprint.replace('sha256:', '')}`;
+}
+
 async function fetchDevToken(): Promise<CachedToken> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/dev-token`, { method: 'POST' });
+  const userId = await devUserId();
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/auth/dev-token?userId=${encodeURIComponent(userId)}`,
+    { method: 'POST' },
+  );
   if (!response.ok) {
     throw new Error(`POST /api/v1/auth/dev-token responded ${response.status}`);
   }
