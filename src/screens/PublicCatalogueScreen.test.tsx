@@ -481,7 +481,7 @@ describe('PublicCatalogueScreen — D12 exclusion', () => {
     await render(<PublicCatalogueScreen />);
 
     await waitFor(() => expect(screen.getByText('An Elite Title')).toBeTruthy());
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
     expect(screen.queryByTestId('queue-action-position')).toBeNull();
     expect(screen.queryByTestId('queue-action-offer')).toBeNull();
     expect(screen.queryByTestId('content-card-action')).toBeNull();

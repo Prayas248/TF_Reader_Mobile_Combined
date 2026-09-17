@@ -13,7 +13,7 @@ const LABELS: Record<ActionId, string> = {
   read: 'Read',
   play: 'Play',
   download: 'Download',
-  grantAccess: 'Grant access',
+  grantAccess: 'Request access',
   acceptOffer: 'Accept',
   rejectOffer: 'Reject',
   revokeLicence: 'Revoke licence',

@@ -619,13 +619,13 @@ describe('ShelfScreen — no Elite queue affordance', () => {
     useLibraryStore.setState({ loans: [], holds: [], loading: false });
   });
 
-  it('draws no Grant access button on an Elite row', async () => {
+  it('draws no Request access button on an Elite row', async () => {
     setCatalogueSource(fakeSource(async () => eliteShelf('item_42')));
 
     await render(<ShelfScreen {...routeProps} />);
 
     await waitFor(() => expect(screen.getByText('Elite item_42')).toBeTruthy());
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
     expect(screen.queryByTestId('content-card-action')).toBeNull();
   });
 
@@ -635,7 +635,7 @@ describe('ShelfScreen — no Elite queue affordance', () => {
     await render(<ShelfScreen {...routeProps} />);
 
     await waitFor(() => expect(screen.getByText('Elite item_99')).toBeTruthy());
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
   });
 
   // This screen no longer reads the holdings cache at all, so a queued hold
@@ -703,7 +703,7 @@ describe('ShelfScreen — D8 not entitled', () => {
     expect(screen.queryByText('Open Access')).toBeNull();
     expect(screen.queryByTestId('content-card-badge')).toBeNull();
     expect(screen.queryByTestId('content-card-action')).toBeNull();
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
   });
 });
 

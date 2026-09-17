@@ -1575,14 +1575,14 @@ describe('SearchScreen — no Elite queue affordance', () => {
     useLibraryStore.setState({ loans: [], holds: [], loading: false });
   });
 
-  it('draws no Grant access button on an Elite result', async () => {
+  it('draws no Request access button on an Elite result', async () => {
     setSearchPipeline(stub(() => Promise.resolve(eliteFeed())));
     await render(<SearchScreen />);
 
     await submit('elite');
 
     await waitFor(() => expect(screen.getByText('An Elite Title')).toBeTruthy());
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
   });
 
   it('draws no queue position even when the reader is queued', async () => {

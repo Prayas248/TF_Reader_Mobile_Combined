@@ -122,15 +122,16 @@ describe('fetchEncryptedAssetChunked — resume after an interruption', () => {
     const bookId = 'chunked-resume-1';
     const asset = randomBytes(Math.floor(CHUNK_SIZE_BYTES * 3.3)); // 4 chunks
 
-    // First attempt: chunks 1-2 succeed, chunk 3 fails (simulated dropped connection).
-    let callCount = 0;
+    // First attempt: chunk 0 (learns the total) and chunk 1 succeed; chunk 2 fails (simulated
+    // dropped connection). Triggered by the requested byte offset, not call count — with chunks
+    // 1-3 now fetched as one concurrent batch, all three requests fire regardless of which one
+    // fails, so a call-count-based trigger would depend on network completion order.
     const failingFetch = jest.fn().mockImplementation(async (_url: string, init: { headers: Record<string, string> }) => {
-      callCount++;
-      if (callCount === 3) {
-        throw new TypeError('Network request failed');
-      }
       const [, startStr, endStr] = /^bytes=(\d+)-(\d+)$/.exec(init.headers.Range)!;
       const start = Number(startStr);
+      if (start === CHUNK_SIZE_BYTES * 2) {
+        throw new TypeError('Network request failed');
+      }
       const end = Math.min(Number(endStr), asset.length - 1);
       return new Response(asset.subarray(start, end + 1), {
         status: 206,
@@ -140,7 +141,9 @@ describe('fetchEncryptedAssetChunked — resume after an interruption', () => {
     global.fetch = failingFetch;
 
     await expect(fetchEncryptedAssetChunked(bookId, ASSET_URL)).rejects.toBeInstanceOf(DownloadFailure);
-    expect(failingFetch).toHaveBeenCalledTimes(3);
+    // Chunk 0 (its own request) + the batch of chunks 1-3 dispatched concurrently = 4 calls,
+    // even though only chunks 0-1 end up persisted (chunk 2 fails, chunk 3 is discarded with it).
+    expect(failingFetch).toHaveBeenCalledTimes(4);
 
     // Second attempt, fresh fetch mock: must resume from 2 chunks in, not from 0.
     const resumeFetch = rangeServerFetch(asset);
@@ -160,14 +163,12 @@ describe('fetchEncryptedAssetChunked — resume after an interruption', () => {
     const bookId = 'chunked-resume-progress';
     const asset = randomBytes(Math.floor(CHUNK_SIZE_BYTES * 3.3)); // 4 chunks
 
-    let callCount = 0;
     const failingFetch = jest.fn().mockImplementation(async (_url: string, init: { headers: Record<string, string> }) => {
-      callCount++;
-      if (callCount === 3) {
-        throw new TypeError('Network request failed');
-      }
       const [, startStr, endStr] = /^bytes=(\d+)-(\d+)$/.exec(init.headers.Range)!;
       const start = Number(startStr);
+      if (start === CHUNK_SIZE_BYTES * 2) {
+        throw new TypeError('Network request failed');
+      }
       const end = Math.min(Number(endStr), asset.length - 1);
       return new Response(asset.subarray(start, end + 1), {
         status: 206,
@@ -269,18 +270,18 @@ describe('fetchEncryptedAssetChunked — edge cases', () => {
     const bookId = 'app-kill-resume';
     const asset = randomBytes(Math.floor(CHUNK_SIZE_BYTES * 2.8)); // 3 chunks
 
-    // First download attempt: succeeds for 2 chunks, then fails (simulating app crash)
-    let firstAttemptCallCount = 0;
+    // First download attempt: succeeds for chunk 0 and chunk 1, then fails on chunk 2
+    // (simulating app crash) — triggered by the requested byte offset, since chunks 1-2 are
+    // fetched as one concurrent batch and both requests fire regardless of which one fails.
     const firstFetch = jest.fn().mockImplementation(async (_url: string, init: { headers?: Record<string, string> }) => {
-      firstAttemptCallCount++;
-      if (firstAttemptCallCount === 3) {
-        throw new Error('Simulated app crash mid-download');
-      }
       const rangeHeader = init?.headers?.Range;
       if (!rangeHeader) return new Response(asset, { status: 200 });
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
       if (!match) return new Response(null, { status: 400 });
       const start = Number(match[1]);
+      if (start === CHUNK_SIZE_BYTES * 2) {
+        throw new Error('Simulated app crash mid-download');
+      }
       const end = Math.min(Number(match[2]), asset.length - 1);
       return new Response(asset.subarray(start, end + 1), {
         status: 206,
@@ -289,7 +290,8 @@ describe('fetchEncryptedAssetChunked — edge cases', () => {
     });
     global.fetch = firstFetch;
 
-    // First attempt fails after 2 chunks (2 successful requests, 3rd fails)
+    // First attempt fails after 2 chunks (chunk 0's own request, then chunk 1 succeeding
+    // and chunk 2 failing within the same batch)
     await expect(fetchEncryptedAssetChunked(bookId, ASSET_URL)).rejects.toMatchObject({
       code: DownloadError.ASSET_FETCH_FAILED,
     });
@@ -333,48 +335,35 @@ describe('fetchEncryptedAssetChunked — edge cases', () => {
     expect(rangeCalls[0][1].headers.Range).toBe(`bytes=0-${CHUNK_SIZE_BYTES - 1}`);
   });
 
-  it('handles server dropping Range support mid-stream by treating 200 as complete file', async () => {
+  it('fails closed if the server drops Range support mid-stream, after chunking has started', async () => {
     const bookId = 'range-dropped-mid-stream';
     const asset = randomBytes(Math.floor(CHUNK_SIZE_BYTES * 2.5)); // 3 chunks
 
-    let callCount = 0;
+    // Chunk 0's own request proves Range support (206) and is handled by the no-Range early
+    // return only if that very FIRST request comes back 200 — once past it, any further
+    // request that comes back as something other than 206 is anomalous (a real Range-capable
+    // static file server does not change behavior mid-stream) and is treated as a failure
+    // rather than silently reassembled as if it were the whole file.
     const switchingFetch = jest.fn().mockImplementation(async (_url: string, init: { headers?: Record<string, string> }) => {
-      callCount++;
       const rangeHeader = init?.headers?.Range;
+      if (!rangeHeader) return new Response(asset, { status: 200 });
+      const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+      if (!match) return new Response(null, { status: 400 });
+      const start = Number(match[1]);
 
-      // First 2 chunks work with Range (206)
-      if (rangeHeader && callCount <= 2) {
-        const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!match) return new Response(null, { status: 400 });
-        const start = Number(match[1]);
+      // Chunk 0 gets a normal 206. Every later chunk "drops Range support" and gets 200 instead.
+      if (start === 0) {
         const end = Math.min(Number(match[2]), asset.length - 1);
         return new Response(asset.subarray(start, end + 1), {
           status: 206,
           headers: { 'Content-Range': `bytes ${start}-${end}/${asset.length}` },
         });
       }
-
-      // 3rd attempt: server drops Range support, returns full asset as 200
-      if (rangeHeader && callCount === 3) {
-        // Server stopped supporting Range, returns entire asset with 200
-        return new Response(asset, { status: 200 });
-      }
-
-      // Non-Range requests always return full asset
-      if (!rangeHeader) {
-        return new Response(asset, { status: 200 });
-      }
-
-      return new Response(null, { status: 400 });
+      return new Response(asset, { status: 200 });
     });
     global.fetch = switchingFetch;
 
-    // This should succeed — when 206->200 happens, client treats it as full file and stops
-    const result = await fetchEncryptedAssetChunked(bookId, ASSET_URL);
-
-    expect(Buffer.from(result).equals(Buffer.from(asset))).toBe(true);
-    // 2 successful Range requests, then 1 request that returns 200 (full asset)
-    expect(switchingFetch.mock.calls.length).toBe(3);
+    await expect(fetchEncryptedAssetChunked(bookId, ASSET_URL)).rejects.toBeInstanceOf(DownloadFailure);
   });
 
   it('cleans up mismatched partial state (file without manifest or vice versa)', async () => {
@@ -407,16 +396,16 @@ describe('fetchEncryptedAssetChunked — extended resumable path tests', () => {
     const bookId = 'resume-partial-chunks';
     const asset = randomBytes(Math.floor(CHUNK_SIZE_BYTES * 4.5)); // 5 chunks
 
-    // First attempt: write 3 full chunks, then fail
-    let firstCallCount = 0;
+    // First attempt: write 3 full chunks (chunk 0's own request, then chunks 1-2 succeeding
+    // within a batch alongside chunk 3, which fails), then fail — triggered by byte offset since
+    // chunks 1-3 are dispatched as one concurrent batch.
     const firstFetch = jest.fn().mockImplementation(async (_url: string, init: { headers?: Record<string, string> }) => {
-      firstCallCount++;
-      if (firstCallCount === 4) throw new Error('Connection failed');
       const rangeHeader = init?.headers?.Range;
       if (!rangeHeader) return new Response(asset, { status: 200 });
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
       if (!match) return new Response(null, { status: 400 });
       const start = Number(match[1]);
+      if (start === CHUNK_SIZE_BYTES * 3) throw new Error('Connection failed');
       const end = Math.min(Number(match[2]), asset.length - 1);
       return new Response(asset.subarray(start, end + 1), {
         status: 206,
@@ -441,16 +430,15 @@ describe('fetchEncryptedAssetChunked — extended resumable path tests', () => {
     const bookId = 'resume-byte-match';
     const asset = randomBytes(Math.floor(CHUNK_SIZE_BYTES * 3.2)); // 4 chunks
 
-    // Create consistent partial state (2 chunks downloaded)
-    let callCount = 0;
+    // Create consistent partial state (2 chunks downloaded) — triggered by byte offset since
+    // chunks 1-3 are dispatched as one concurrent batch.
     const initialFetch = jest.fn().mockImplementation(async (_url: string, init: { headers?: Record<string, string> }) => {
-      callCount++;
-      if (callCount === 3) throw new Error('Connection dropped');
       const rangeHeader = init?.headers?.Range;
       if (!rangeHeader) return new Response(asset, { status: 200 });
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
       if (!match) return new Response(null, { status: 400 });
       const start = Number(match[1]);
+      if (start === CHUNK_SIZE_BYTES * 2) throw new Error('Connection dropped');
       const end = Math.min(Number(match[2]), asset.length - 1);
       return new Response(asset.subarray(start, end + 1), {
         status: 206,
@@ -515,16 +503,15 @@ describe('fetchEncryptedAssetChunked — extended resumable path tests', () => {
     const bookId = 'resume-progress-boundary';
     const asset = randomBytes(Math.floor(CHUNK_SIZE_BYTES * 3.3)); // 4 chunks
 
-    // First: download 2 chunks then fail
-    let firstCallCount = 0;
+    // First: download 2 chunks then fail — triggered by byte offset since chunks 1-3 are
+    // dispatched as one concurrent batch.
     const firstFetch = jest.fn().mockImplementation(async (_url: string, init: { headers?: Record<string, string> }) => {
-      firstCallCount++;
-      if (firstCallCount === 3) throw new Error('Network error');
       const rangeHeader = init?.headers?.Range;
       if (!rangeHeader) return new Response(asset, { status: 200 });
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
       if (!match) return new Response(null, { status: 400 });
       const start = Number(match[1]);
+      if (start === CHUNK_SIZE_BYTES * 2) throw new Error('Network error');
       const end = Math.min(Number(match[2]), asset.length - 1);
       return new Response(asset.subarray(start, end + 1), {
         status: 206,
@@ -585,16 +572,16 @@ describe('fetchEncryptedAssetChunked — extended resumable path tests', () => {
     const bookId = 'multi-retry-resume';
     const asset = randomBytes(Math.floor(CHUNK_SIZE_BYTES * 4)); // 4 chunks
 
-    // Attempt 1: get 1 chunk then fail
-    let attempt1Count = 0;
+    // Attempt 1: get 1 chunk (chunk 0's own request) then fail on the very first chunk of the
+    // following batch — triggered by byte offset since the remaining chunks are dispatched
+    // concurrently.
     const attempt1Fetch = jest.fn().mockImplementation(async (_url: string, init: { headers?: Record<string, string> }) => {
-      attempt1Count++;
-      if (attempt1Count === 2) throw new Error('Attempt 1 fail');
       const rangeHeader = init?.headers?.Range;
       if (!rangeHeader) return new Response(asset, { status: 200 });
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
       if (!match) return new Response(null, { status: 400 });
       const start = Number(match[1]);
+      if (start === CHUNK_SIZE_BYTES) throw new Error('Attempt 1 fail');
       const end = Math.min(Number(match[2]), asset.length - 1);
       return new Response(asset.subarray(start, end + 1), {
         status: 206,
@@ -605,15 +592,13 @@ describe('fetchEncryptedAssetChunked — extended resumable path tests', () => {
     await expect(fetchEncryptedAssetChunked(bookId, ASSET_URL)).rejects.toBeInstanceOf(DownloadFailure);
 
     // Attempt 2: resume, get 1 more chunk, then fail
-    let attempt2Count = 0;
     const attempt2Fetch = jest.fn().mockImplementation(async (_url: string, init: { headers?: Record<string, string> }) => {
-      attempt2Count++;
-      if (attempt2Count === 2) throw new Error('Attempt 2 fail');
       const rangeHeader = init?.headers?.Range;
       if (!rangeHeader) return new Response(asset, { status: 200 });
       const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
       if (!match) return new Response(null, { status: 400 });
       const start = Number(match[1]);
+      if (start === CHUNK_SIZE_BYTES * 2) throw new Error('Attempt 2 fail');
       const end = Math.min(Number(match[2]), asset.length - 1);
       return new Response(asset.subarray(start, end + 1), {
         status: 206,

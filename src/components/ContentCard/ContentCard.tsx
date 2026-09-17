@@ -78,7 +78,7 @@ export interface ContentCardProps {
    * The row's access ACTION, already resolved — D12's Elite queue button.
    *
    * A SLOT, FOR THE SAME REASON `badge` IS ONE. This card must not decide that
-   * an Elite title with nothing held earns a "Grant access" button; that is
+   * an Elite title with nothing held earns a "Request access" button; that is
    * `resolveAccess`'s answer and the screen's to render (Design Spec §5.1,
    * CONVENTIONS §3). Handing it a node keeps this file unable to reach for
    * `acquisition.actionId` even by accident — the same reason it imports nothing

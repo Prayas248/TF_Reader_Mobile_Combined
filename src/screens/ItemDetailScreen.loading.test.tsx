@@ -300,7 +300,7 @@ describe('ItemDetailScreen — D8 not entitled', () => {
     await render(renderArticleContent(notEntitledDetail(), jest.fn()));
 
     expect(screen.queryByTestId('action-bar')).toBeNull();
-    for (const label of ['Read', 'Download', 'Grant access', 'Sign in', 'Subscribe']) {
+    for (const label of ['Read', 'Download', 'Request access', 'Sign in', 'Subscribe']) {
       expect(screen.queryByText(label)).toBeNull();
     }
   });
@@ -323,7 +323,7 @@ describe('ItemDetailScreen — D8 not entitled', () => {
     expect(screen.getByText('Metadata Only')).toBeTruthy();
     expect(screen.queryByText('Open Access')).toBeNull();
     expect(screen.queryByTestId('action-bar')).toBeNull();
-    for (const label of ['Read', 'Download', 'Grant access', 'Sign in', 'Subscribe']) {
+    for (const label of ['Read', 'Download', 'Request access', 'Sign in', 'Subscribe']) {
       expect(screen.queryByText(label)).toBeNull();
     }
     // The muted mockup elements stay non-interactive rather than becoming the
@@ -385,7 +385,7 @@ describe('ItemDetailScreen — D12 queued', () => {
   it('shows nothing tappable alongside it', async () => {
     await render(renderArticleContent(queuedDetail(), jest.fn()));
 
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
     expect(screen.queryByText('Accept')).toBeNull();
     expect(screen.queryByTestId('action-bar')).toBeNull();
   });
@@ -425,10 +425,10 @@ describe('ItemDetailScreen — D12 grant and offered', () => {
     return buildItemDetail({ publication, workType: ARTICLE_WORK_TYPE, access });
   }
 
-  it('offers Grant access when nothing is held', async () => {
+  it('offers Request access when nothing is held', async () => {
     await render(renderArticleContent(eliteDetail(), jest.fn()));
 
-    expect(screen.getByText('Grant access')).toBeTruthy();
+    expect(screen.getByText('Request access')).toBeTruthy();
     expect(screen.queryByTestId('queue-position')).toBeNull();
   });
 
@@ -447,7 +447,7 @@ describe('ItemDetailScreen — D12 grant and offered', () => {
     expect(screen.getByText('Reject')).toBeTruthy();
     // A reader with an offer is no longer waiting, so no position.
     expect(screen.queryByTestId('queue-position')).toBeNull();
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
   });
 
   // No duplicates: the bar and the position line are mutually exclusive by

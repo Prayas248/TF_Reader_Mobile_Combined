@@ -63,6 +63,7 @@ import { getCatalogueSource } from '@config/catalogue';
 import { getLicenceSource } from '@config/licence';
 import { borrowOrPlaceHold, queuePositionLabel, queueProgressFraction } from '@/licence/queueRequest';
 import { openBook } from '@/features/download/openBook';
+import { DownloadError, DownloadFailure } from '@/features/download/errors';
 import { useDownloadProgress } from '@/features/download/useDownloadProgress';
 import { useNetworkStatus } from '@hooks/useNetworkStatus';
 import { buildItemDetail, type ItemDetail } from '@model/detail';
@@ -711,7 +712,7 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
   const refresh = useLibraryStore((s) => s.refresh);
   // See libraryStore.ts's own header — `loans`/`holds` above may be the last
   // SUCCESSFUL read, not a confirmed current one, whenever this is true. The
-  // action bar (Read vs. Grant access) and `QueuePositionLine` are both
+  // action bar (Read vs. Request access) and `QueuePositionLine` are both
   // resolved from those two arrays, so a failed refresh here is just as
   // capable of showing stale access as LibraryScreen's own due-date labels.
   const holdingsRefreshFailed = useLibraryStore((s) => s.refreshFailed);
@@ -865,7 +866,7 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
   }, [fetchItem]);
 
   // ONE LICENCE CALL IN FLIGHT, AND THE BAR SAYS SO. Every branch below used to
-  // be fire-and-forget: the button stayed idle, so Read or Grant access could be
+  // be fire-and-forget: the button stayed idle, so Read or Request access could be
   // tapped four times while the first borrow was still open and each tap made
   // another call. `pendingAction` is what ActionBar's own `pending` prop was
   // built for — it renders that one button `loading`, and ActionButton makes a
@@ -969,7 +970,17 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
           })
           .catch((err: unknown) => {
             console.error('[read] openBook failed:', err);
-            setLicenceMessage(LICENCE_GENERIC_MESSAGE);
+            // NO_COPIES_AVAILABLE here is not a failure to report — it means the real backend
+            // joined this reader's Elite hold queue INSIDE the same call that would otherwise
+            // have opened the book (see openBook.ts's guard). `refresh()` below re-fetches
+            // GET /api/v1/library, which now carries that hold, and resolveAccess() renders the
+            // queue position as a status with no button — exactly the "a queue position is a
+            // status, never an error" rule this screen already follows for `grantAccess`
+            // (borrowOrPlaceHold). Showing the generic message here would tell the reader their
+            // tap failed at the same moment the screen is about to show them their place in line.
+            if (!(err instanceof DownloadFailure && err.code === DownloadError.NO_COPIES_AVAILABLE)) {
+              setLicenceMessage(LICENCE_GENERIC_MESSAGE);
+            }
           })
           .finally(() => {
             void refresh();

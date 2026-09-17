@@ -840,7 +840,7 @@ describe('CatalogueScreen — list-level holdings cache', () => {
 
 // ── D12 — the Elite queue affordance is ItemDetailScreen only ─────────────────
 //
-// CONFIRMED TEAM DECISION, 26 Aug. The Grant access / queue-position /
+// CONFIRMED TEAM DECISION, 26 Aug. The Request access / queue-position /
 // Accept-Reject affordances live on the item detail screen and on no card
 // surface, so a shelf row draws no queue button regardless of tier or holdings.
 //
@@ -879,13 +879,13 @@ describe('CatalogueScreen — no Elite queue affordance', () => {
     };
   }
 
-  it('draws no Grant access button when the reader holds nothing', async () => {
+  it('draws no Request access button when the reader holds nothing', async () => {
     setCatalogueSource(fakeSource(async () => eliteCatalogue()));
 
     await render(<CatalogueScreen institution={OTHER_INSTITUTION} />);
 
     await waitFor(() => expect(screen.getByText('An Elite Title')).toBeTruthy());
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
     // No empty action wrapper either — the row should look untouched.
     expect(screen.queryByTestId('content-card-action')).toBeNull();
   });
@@ -1011,7 +1011,7 @@ describe('CatalogueScreen — D8 not entitled', () => {
     await waitFor(() => expect(screen.getByText('Metadata Only')).toBeTruthy());
 
     expect(screen.queryByTestId('content-card-action')).toBeNull();
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
     expect(screen.queryByText('Read')).toBeNull();
     expect(screen.queryByText('Download')).toBeNull();
     expect(screen.queryByText('Sign in')).toBeNull();

@@ -577,6 +577,33 @@ describe('downloadBook — failure branches', () => {
       code: DownloadError.SESSION_FETCH_FAILED,
     });
   });
+
+  // Pins the same fix as openBook.test.ts's queued-session case: a copy-limited title with no
+  // free copy gets queued INSIDE the reading-session response (no `content`, `holdCreatedAt`
+  // set instead) rather than a separate refusal — see ReadBrokerService.queuedResponse() in
+  // tf_reader_backend_temp. That must surface as the actionable NO_COPIES_AVAILABLE, not the
+  // generic SESSION_FETCH_FAILED a genuinely malformed response gets.
+  it('rejects with NO_COPIES_AVAILABLE, not SESSION_FETCH_FAILED, when the session is queued', async () => {
+    const queuedSession = {
+      sessionId: 'session-queued-book',
+      itemId: 'queued-book',
+      licenceModel: 'ELITE',
+      canPersist: false,
+      holdCreatedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+      serverTime: new Date().toISOString(),
+    };
+    global.fetch = jest.fn().mockImplementation(async (url: string) => {
+      if (url === `${API_BASE_URL}/api/v1/reading-sessions`) {
+        return new Response(JSON.stringify(queuedSession), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await expect(downloadBook('queued-book')).rejects.toMatchObject({
+      code: DownloadError.NO_COPIES_AVAILABLE,
+    });
+  });
 });
 
 // New coverage for the real contract's FlambeauError -> DownloadError mapping

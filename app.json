@@ -1,9 +1,10 @@
 {
   "expo": {
-    "name": "TF Reader",
+    "name": "Nexus",
     "slug": "tf-reader-mobile",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/nexus-3.png",
     "scheme": "tfreader",
     "userInterfaceStyle": "automatic",
     "assetBundlePatterns": [

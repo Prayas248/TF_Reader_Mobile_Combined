@@ -231,7 +231,7 @@ describe('resolveAccess', () => {
     // on this branch. Nothing held now offers exactly one button, the same shape
     // as ELITE's `requires_grant`, rather than the old "borrow invisibly behind
     // Read/Download" flow this describe block used to pin.
-    it('offers only Grant access with no licence held', () => {
+    it('offers only Request access with no licence held', () => {
       const result = resolve();
       expect(result.state).toBe('requires_grant');
       expect(result.actions).toEqual(['grantAccess']);
@@ -253,7 +253,7 @@ describe('resolveAccess', () => {
     const elite = (over: Partial<Acquisition> = {}) =>
       anItem({ acquisition: anAcquisition({ licenceModel: 'ELITE', canPersist: false, ...over }) });
 
-    it('1 · nothing held offers one button, and it is Grant access', () => {
+    it('1 · nothing held offers one button, and it is Request access', () => {
       const result = resolve({ item: elite() });
       expect(result.state).toBe('requires_grant');
       expect(result.actions).toEqual(['grantAccess']);
@@ -276,7 +276,7 @@ describe('resolveAccess', () => {
       expect(result.queueLength).toBe(11);
     });
 
-    // A waiting reader must not be handed a second Grant access — tapping it
+    // A waiting reader must not be handed a second Request access — tapping it
     // would either do nothing or move them down their own queue.
     it('2 · offers a queued reader nothing to tap', () => {
       const { actions } = resolve({ item: elite(), hold: aHold('queued', { position: 4 }) });
@@ -335,7 +335,7 @@ describe('resolveAccess', () => {
 
     // A missed offer is not restored to its old place, so the reader is back to
     // asking from scratch — the same button as never having asked.
-    it('3 · a lapsed offer resolves to Grant access, not back to queued', () => {
+    it('3 · a lapsed offer resolves to Request access, not back to queued', () => {
       const result = resolve({ item: elite(), hold: aHold('expired') });
       expect(result.state).toBe('requires_grant');
       expect(result.actions).toEqual(['grantAccess']);

@@ -24,7 +24,7 @@
 //
 // ─── D12 — item detail only, not wired here ──────────────────────────────────
 //
-// D12's Elite queue button ("Grant access") is scoped to the item detail screen
+// D12's Elite queue button ("Request access") is scoped to the item detail screen
 // only. CatalogueScreen, ShelfScreen and SearchScreen carry the same note and
 // none of them render it either — this is not a special case for this screen.
 //

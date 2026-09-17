@@ -137,7 +137,7 @@ function Resolved({ result }: { result: AccessResult }) {
 // The Elite sequence, driven by taps rather than by reading a table.
 //
 // The queue switch is the only thing a backend would otherwise decide: it stands in
-// for "was anybody ahead of me when I asked". Flip it before tapping Grant access
+// for "was anybody ahead of me when I asked". Flip it before tapping Request access
 // and the same tap leads to the two different paths, which is the clearest way to
 // see that both end at the same Accept / Reject pair.
 function EliteWalkthrough() {
@@ -178,15 +178,15 @@ function EliteWalkthrough() {
   return (
     <View style={styles.group}>
       <Text style={styles.label}>
-        Elite, end to end. Tap through it — Grant access, then Accept or Reject, then Revoke.
+        Elite, end to end. Tap through it — Request access, then Accept or Reject, then Revoke.
       </Text>
 
       <View style={styles.switchRow}>
         <Switch value={othersAhead} onValueChange={setOthersAhead} />
         <Text style={styles.caption}>
           {othersAhead
-            ? 'Others ahead — Grant access will queue you and show a position'
-            : 'Queue empty — Grant access offers the copy straight back'}
+            ? 'Others ahead — Request access will queue you and show a position'
+            : 'Queue empty — Request access offers the copy straight back'}
         </Text>
       </View>
 

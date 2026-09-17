@@ -24,6 +24,7 @@ import { CatalogueError, CatalogueFailure } from '@model/errors';
 import type { Institution } from '@model/institution';
 import type { Acquisition, Publication } from '@model/types';
 import { LicenceError, LicenceFailure } from '@/licence/LicenceSource';
+import { DownloadError, DownloadFailure } from '@/features/download/errors';
 import { useDownloadStore } from '@store/downloadStore';
 import { useInstitutionStore } from '@store/institutionStore';
 import { useLibraryStore } from '@store/libraryStore';
@@ -229,7 +230,7 @@ const INSTITUTION: Institution = {
 
 // Selecting an institution no longer implies signing in (handToggledSession is
 // gone — see currentSession.ts), so every test below that expects licensed-tier
-// access (Grant access, borrow, hold) has to establish a real session too, not
+// access (Request access, borrow, hold) has to establish a real session too, not
 // just a selected institution.
 function selectAndSignIn(institution: Institution) {
   useInstitutionStore.setState({ selectedInstitution: institution });
@@ -677,11 +678,11 @@ describe('ItemDetailScreen with a book', () => {
 
   // A7 — the other half of the promise: signing in is supposed to unlock
   // different buttons, not just a different set of books. Subscription rather
-  // than Elite, though both now resolve nothing-held to Grant access
+  // than Elite, though both now resolve nothing-held to Request access
   // (resolveAccess.ts's own 14 Sep comment on why Subscription's flow was
   // reversed to match Elite's) — the point here is only Sign in vs. not,
   // never that the two tiers' nothing-held buttons still differ.
-  it('resolves a Subscription title to Grant access once an institution is selected, instead of Sign in', async () => {
+  it('resolves a Subscription title to Request access once an institution is selected, instead of Sign in', async () => {
     selectAndSignIn(INSTITUTION);
     setCatalogueSource(
       fakeSource(async () =>
@@ -691,14 +692,14 @@ describe('ItemDetailScreen with a book', () => {
 
     await render(<ItemDetailScreen {...routeProps} />);
 
-    await waitFor(() => expect(screen.getByText('Grant access')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Request access')).toBeTruthy());
     expect(screen.queryByText('Sign in')).toBeNull();
   });
 
   // The Elite case, since it takes a different (and equally real) button —
   // "requires_grant" rather than "available" — and both must be reachable now
   // that session is no longer permanently null.
-  it('resolves an Elite title to Grant access once an institution is selected, instead of Sign in', async () => {
+  it('resolves an Elite title to Request access once an institution is selected, instead of Sign in', async () => {
     selectAndSignIn(INSTITUTION);
     setCatalogueSource(
       fakeSource(async () => aBook({ acquisition: anAcquisition({ licenceModel: 'ELITE' }) })),
@@ -706,7 +707,7 @@ describe('ItemDetailScreen with a book', () => {
 
     await render(<ItemDetailScreen {...routeProps} />);
 
-    await waitFor(() => expect(screen.getByText('Grant access')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Request access')).toBeTruthy());
     expect(screen.queryByText('Sign in')).toBeNull();
   });
 
@@ -1384,7 +1385,68 @@ describe('ItemDetailScreen — holdings joined from library store', () => {
     await render(<ItemDetailScreen {...routeProps} />);
 
     await waitFor(() => expect(screen.getByText('Revoke licence')).toBeTruthy());
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
+  });
+
+  // Pins the fix for "Read on a full Elite title shows a generic download failure instead of
+  // going into the queue": openBook() now throws NO_COPIES_AVAILABLE (not the generic
+  // SESSION_FETCH_FAILED) when the real backend auto-queues a copy-limited title inside the
+  // reading-session response — see openBook.ts's guard. That code must not show the generic
+  // "couldn't be completed" message, because refresh() (already called in the same .finally())
+  // is about to show the reader their queue position instead — a status, not an error.
+  it('shows no generic failure message when Read is queued (NO_COPIES_AVAILABLE)', async () => {
+    selectAndSignIn(INSTITUTION);
+    const loan = {
+      loanId: 'loan_1',
+      itemId: 'item_42',
+      state: 'active' as const,
+      expiresAt: 9_999_999_999,
+    };
+    useLibraryStore.setState({ loans: [loan], holds: [] });
+    mockGetLibrary.mockResolvedValue({ loans: [loan], holds: [] });
+    setCatalogueSource(
+      fakeSource(async () => aBook({ acquisition: anAcquisition({ licenceModel: 'ELITE' }) })),
+    );
+    mockOpenBook.mockRejectedValueOnce(
+      new DownloadFailure(DownloadError.NO_COPIES_AVAILABLE, 'item_42'),
+    );
+
+    await render(<ItemDetailScreen {...routeProps} />);
+
+    await waitFor(() => expect(screen.getByText('Read')).toBeTruthy());
+    fireEvent.press(screen.getByText('Read'));
+
+    await waitFor(() => expect(mockOpenBook).toHaveBeenCalled());
+    expect(screen.queryByText("That action couldn't be completed. Please try again.")).toBeNull();
+  });
+
+  // The other branch of the same guard: a genuinely different openBook() failure (not a queue)
+  // must still show the generic message — this isn't a blanket suppression.
+  it('still shows the generic failure message when Read fails for a real reason', async () => {
+    selectAndSignIn(INSTITUTION);
+    const loan = {
+      loanId: 'loan_1',
+      itemId: 'item_42',
+      state: 'active' as const,
+      expiresAt: 9_999_999_999,
+    };
+    useLibraryStore.setState({ loans: [loan], holds: [] });
+    mockGetLibrary.mockResolvedValue({ loans: [loan], holds: [] });
+    setCatalogueSource(
+      fakeSource(async () => aBook({ acquisition: anAcquisition({ licenceModel: 'ELITE' }) })),
+    );
+    mockOpenBook.mockRejectedValueOnce(
+      new DownloadFailure(DownloadError.SESSION_FETCH_FAILED, 'item_42'),
+    );
+
+    await render(<ItemDetailScreen {...routeProps} />);
+
+    await waitFor(() => expect(screen.getByText('Read')).toBeTruthy());
+    fireEvent.press(screen.getByText('Read'));
+
+    await waitFor(() =>
+      expect(screen.getByText("That action couldn't be completed. Please try again.")).toBeTruthy(),
+    );
   });
 
   // LABELS ARE 'Accept' AND 'Reject', not "Accept offer"/"Reject offer". The
@@ -1435,7 +1497,7 @@ describe('ItemDetailScreen — holdings joined from library store', () => {
 
     await waitFor(() => expect(screen.getByText('Elite')).toBeTruthy());
     // resolveAccess returns no actions for the queued state.
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
     expect(screen.queryByText('Accept')).toBeNull();
     expect(screen.queryByText('Read')).toBeNull();
   });
@@ -1492,7 +1554,7 @@ describe('ItemDetailScreen — holdings joined from library store', () => {
     expect(screen.queryByTestId('queue-position-progress-track')).toBeNull();
   });
 
-  it('ignores a loan for a different item — still shows Grant access for this one', async () => {
+  it('ignores a loan for a different item — still shows Request access for this one', async () => {
     selectAndSignIn(INSTITUTION);
     const otherLoan = {
       loanId: 'loan_x',
@@ -1509,12 +1571,12 @@ describe('ItemDetailScreen — holdings joined from library store', () => {
 
     await render(<ItemDetailScreen {...routeProps} />);
 
-    await waitFor(() => expect(screen.getByText('Grant access')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Request access')).toBeTruthy());
   });
 });
 
 // Found live, alongside libraryStore.ts's own `refreshFailed`: the action bar
-// below (Read vs. Grant access) is resolved from the same loans/holds a
+// below (Read vs. Request access) is resolved from the same loans/holds a
 // failed refresh leaves stale, so this screen needs the same "unconfirmed"
 // signal LibraryScreen's own due-date labels do.
 describe('ItemDetailScreen — stale holdings', () => {
@@ -1556,7 +1618,7 @@ describe('ItemDetailScreen — stale holdings', () => {
 // licence method, then refresh() re-fetches the library so the action bar
 // reflects the new state without a page reload.
 describe('ItemDetailScreen — invalidate cache after action', () => {
-  it('calls borrow and refreshes the library when Grant access is tapped', async () => {
+  it('calls borrow and refreshes the library when Request access is tapped', async () => {
     selectAndSignIn(INSTITUTION);
     const loan = {
       loanId: 'loan_1',
@@ -1565,7 +1627,7 @@ describe('ItemDetailScreen — invalidate cache after action', () => {
       expiresAt: 9_999_999_999,
     };
     mockBorrow.mockResolvedValue(loan);
-    // First call on mount returns empty → Grant access shown.
+    // First call on mount returns empty → Request access shown.
     // Second call after borrow returns the new loan → Revoke licence shown.
     mockGetLibrary
       .mockResolvedValueOnce({ loans: [], holds: [] })
@@ -1576,8 +1638,8 @@ describe('ItemDetailScreen — invalidate cache after action', () => {
 
     await render(<ItemDetailScreen {...routeProps} />);
 
-    await waitFor(() => expect(screen.getByText('Grant access')).toBeTruthy());
-    fireEvent.press(screen.getByText('Grant access'));
+    await waitFor(() => expect(screen.getByText('Request access')).toBeTruthy());
+    fireEvent.press(screen.getByText('Request access'));
 
     await waitFor(() => expect(mockBorrow).toHaveBeenCalledWith('item_42'));
     await waitFor(() => expect(screen.getByText('Revoke licence')).toBeTruthy());
@@ -1594,7 +1656,7 @@ describe('ItemDetailScreen — invalidate cache after action', () => {
     useLibraryStore.setState({ loans: [loan], holds: [] });
     mockReturnLoan.mockResolvedValue(undefined);
     // First call on mount preserves the pre-set loan → Revoke licence shown.
-    // Second call after return returns empty → Grant access shown.
+    // Second call after return returns empty → Request access shown.
     mockGetLibrary
       .mockResolvedValueOnce({ loans: [loan], holds: [] })
       .mockResolvedValue({ loans: [], holds: [] });
@@ -1608,7 +1670,7 @@ describe('ItemDetailScreen — invalidate cache after action', () => {
     fireEvent.press(screen.getByText('Revoke licence'));
 
     await waitFor(() => expect(mockReturnLoan).toHaveBeenCalledWith('loan_1'));
-    await waitFor(() => expect(screen.getByText('Grant access')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Request access')).toBeTruthy());
   });
 
   it('falls through to placeHold when borrow is refused with NO_COPIES_AVAILABLE', async () => {
@@ -1628,7 +1690,7 @@ describe('ItemDetailScreen — invalidate cache after action', () => {
       serverTime: new Date().toISOString(),
     };
     mockPlaceHold.mockResolvedValue(hold);
-    // First call on mount returns empty → Grant access shown.
+    // First call on mount returns empty → Request access shown.
     // Second call after placeHold returns hold → no actions (queued state).
     mockGetLibrary
       .mockResolvedValueOnce({ loans: [], holds: [] })
@@ -1639,8 +1701,8 @@ describe('ItemDetailScreen — invalidate cache after action', () => {
 
     await render(<ItemDetailScreen {...routeProps} />);
 
-    await waitFor(() => expect(screen.getByText('Grant access')).toBeTruthy());
-    fireEvent.press(screen.getByText('Grant access'));
+    await waitFor(() => expect(screen.getByText('Request access')).toBeTruthy());
+    fireEvent.press(screen.getByText('Request access'));
 
     await waitFor(() => expect(mockPlaceHold).toHaveBeenCalledWith('item_42'));
   });
@@ -1650,7 +1712,7 @@ describe('ItemDetailScreen — invalidate cache after action', () => {
     mockBorrow.mockRejectedValue(
       new LicenceFailure(LicenceError.NETWORK_UNAVAILABLE, { target: 'item_42' }),
     );
-    // Mount refresh returns empty — Grant access shown.
+    // Mount refresh returns empty — Request access shown.
     mockGetLibrary.mockResolvedValue({ loans: [], holds: [] });
     setCatalogueSource(
       fakeSource(async () => aBook({ acquisition: anAcquisition({ licenceModel: 'ELITE' }) })),
@@ -1658,8 +1720,8 @@ describe('ItemDetailScreen — invalidate cache after action', () => {
 
     await render(<ItemDetailScreen {...routeProps} />);
 
-    await waitFor(() => expect(screen.getByText('Grant access')).toBeTruthy());
-    fireEvent.press(screen.getByText('Grant access'));
+    await waitFor(() => expect(screen.getByText('Request access')).toBeTruthy());
+    fireEvent.press(screen.getByText('Request access'));
 
     await waitFor(() => expect(mockBorrow).toHaveBeenCalledWith('item_42'));
     // A network failure must not silently enqueue the reader.

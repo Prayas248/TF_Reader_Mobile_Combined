@@ -102,7 +102,7 @@ describe('ActionBar', () => {
     });
   });
 
-  // Elite, 16 Aug: one Grant access button to start, then either an offer straight
+  // Elite, 16 Aug: one Request access button to start, then either an offer straight
   // back or a queue position and the same offer later. No Download at any point.
   //
   // Every step asserts Download is ABSENT. That is the assertion with teeth: it is
@@ -110,11 +110,11 @@ describe('ActionBar', () => {
   // the tier — so what is really being checked is that nothing here invents an
   // action the caller did not pass.
   describe("Elite's four steps", () => {
-    it('1 — nothing held offers Grant access, and nothing else', async () => {
+    it('1 — nothing held offers Request access, and nothing else', async () => {
       const { getByText, queryByText } = await render(
         <ActionBar actions={['grantAccess']} onAction={jest.fn()} />,
       );
-      expect(getByText('Grant access')).toBeTruthy();
+      expect(getByText('Request access')).toBeTruthy();
       expect(queryByText('Download')).toBeNull();
     });
 
@@ -125,7 +125,7 @@ describe('ActionBar', () => {
         <ActionBar actions={[]} onAction={jest.fn()} />,
       );
       expect(queryByTestId('action-bar')).toBeNull();
-      expect(queryByText('Grant access')).toBeNull();
+      expect(queryByText('Request access')).toBeNull();
     });
 
     it('3 — an offer draws Accept and Reject together', async () => {

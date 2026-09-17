@@ -88,8 +88,8 @@ const ACTIONS: Record<
   // The Elite entry point, and the only button a reader holding nothing sees. It
   // says nothing about the queue — see index.html §Access for why a queue length
   // shown before the reader has asked for anything is only a reason not to tap.
-  grantAccess: { label: 'Grant access', icon: 'key-outline', emphasis: 'filled' },
-  // The two answers to an offer. Reached either straight from the Grant access
+  grantAccess: { label: 'Request access', icon: 'key-outline', emphasis: 'filled' },
+  // The two answers to an offer. Reached either straight from the Request access
   // tap, when nobody was ahead, or later from a notification — identical both
   // ways, which is the whole point of resolving them to one pair.
   acceptOffer: { label: 'Accept', icon: 'check', emphasis: 'filled' },

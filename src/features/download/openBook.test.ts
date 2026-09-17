@@ -229,6 +229,38 @@ describe('openBook', () => {
     expect(contentStore.store).not.toHaveBeenCalled();
   });
 
+  // Pins the fix for "Read on a full Elite title shows a generic download failure instead of
+  // joining the queue" — the real backend answers a copy-limited (ELITE) title with no free copy
+  // by queuing the reader INSIDE the reading-session response itself: no `content`, but
+  // `holdCreatedAt` set. That must throw the actionable NO_COPIES_AVAILABLE, not the generic
+  // SESSION_FETCH_FAILED a genuinely malformed response gets.
+  it('throws NO_COPIES_AVAILABLE, not SESSION_FETCH_FAILED, when the session is queued (no content, holdCreatedAt set)', async () => {
+    jest.mocked(contentStore.isAvailableOffline).mockResolvedValue(false);
+    jest.mocked(checkLicense).mockResolvedValue(
+      onlineResult({
+        licenceModel: 'ELITE',
+        content: undefined as never,
+        holdCreatedAt: new Date().toISOString(),
+      }),
+    );
+
+    await expect(openBook('test-book', 'AUDIO')).rejects.toThrow(
+      expect.objectContaining({ code: DownloadError.NO_COPIES_AVAILABLE }),
+    );
+    expect(fetchEncryptedAssetChunked).not.toHaveBeenCalled();
+  });
+
+  it('still throws the generic SESSION_FETCH_FAILED when content is missing and holdCreatedAt is absent too', async () => {
+    jest.mocked(contentStore.isAvailableOffline).mockResolvedValue(false);
+    jest.mocked(checkLicense).mockResolvedValue(
+      onlineResult({ content: undefined as never, holdCreatedAt: undefined }),
+    );
+
+    await expect(openBook('test-book', 'EPUB')).rejects.toThrow(
+      expect.objectContaining({ code: DownloadError.SESSION_FETCH_FAILED }),
+    );
+  });
+
   it('passes maxBytes budget to chunked fetcher accounting for nonce + tag overhead', async () => {
     jest.mocked(contentStore.isAvailableOffline).mockResolvedValue(false);
     jest.mocked(fetchEncryptedAssetChunked).mockResolvedValue(new Uint8Array(28));

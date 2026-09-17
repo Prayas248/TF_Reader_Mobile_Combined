@@ -266,7 +266,7 @@ describe('ContentCard cover variant', () => {
         variant="cover"
         title="Rights for Robots"
         format="PDF"
-        action={<Text>Grant access</Text>}
+        action={<Text>Request access</Text>}
         onPress={() => {}}
       />,
     );
@@ -366,21 +366,21 @@ describe('ContentCard action slot', () => {
   });
 
   it('renders the action it is handed', async () => {
-    await render(<ContentCard title="Rights for Robots" action={<Text>Grant access</Text>} />);
+    await render(<ContentCard title="Rights for Robots" action={<Text>Request access</Text>} />);
 
     expect(screen.getByTestId('content-card-action')).toBeTruthy();
-    expect(screen.getByText('Grant access')).toBeTruthy();
+    expect(screen.getByText('Request access')).toBeTruthy();
   });
 
   // The skeleton stands in for a publication whose entitlement is not known yet,
   // so it must not offer an action — same rule the badge already follows.
   it('renders no action while the row is a skeleton', async () => {
     await render(
-      <ContentCard state="loading" title="Rights for Robots" action={<Text>Grant access</Text>} />,
+      <ContentCard state="loading" title="Rights for Robots" action={<Text>Request access</Text>} />,
     );
 
     expect(screen.queryByTestId('content-card-action')).toBeNull();
-    expect(screen.queryByText('Grant access')).toBeNull();
+    expect(screen.queryByText('Request access')).toBeNull();
   });
 
   // The reason the slot can hold a button at all: a nested Pressable claims its
@@ -399,7 +399,7 @@ describe('ContentCard action slot', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Grant access' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Request access' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Rights for Robots' })).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('action-button-grantAccess'));

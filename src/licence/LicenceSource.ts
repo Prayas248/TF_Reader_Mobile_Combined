@@ -111,7 +111,7 @@ export interface LicenceSource {
   // So this is safe to call twice and callers need no guard of their own.
   //
   // REFUSES WITH `NO_COPIES_AVAILABLE` RATHER THAN QUEUEING, which is the whole shape
-  // of the Elite flow: Grant access calls this first, and only offers the queue when
+  // of the Elite flow: Request access calls this first, and only offers the queue when
   // this says there is nothing free. Catch REFUSED with that code and call
   // `placeHold` — do not enqueue on the reader's behalf.
   borrow(itemId: BookId): Promise<Loan>;

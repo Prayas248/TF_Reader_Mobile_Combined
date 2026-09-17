@@ -130,19 +130,6 @@ export interface IndexUrl {
   termCount?: number;
 }
 
-/** Where the reader stands for a copy-limited (ELITE) title. Absent for open access and
- * subscription — those tiers have no queue. `position: 0` means a copy is free now; the
- * `content` URL on the response carrying this will have expired by the time a queued reader is
- * promoted, so the app must call again rather than cache it. `estimatedAt` is a guess, named like
- * one — it knows nothing about early returns. */
-export interface QueueState {
-  queueId: string;
-  position: number;
-  queueLength: number;
-  readNow: boolean;
-  estimatedAt?: string;
-}
-
 export interface ReadingSessionResponse {
   /** For correlating logs. Not a credential, never presented back to the server. */
   sessionId: string;
@@ -164,8 +151,16 @@ export interface ReadingSessionResponse {
    * DOWNLOAD-intent reading session regardless of what the UI showed. Present on the real
    * backend's response, same field the old `Loan.canPersist` carried. */
   canPersist?: boolean;
-  /** Present only for a copy-limited (ELITE) title with no copy free right now. */
-  queue?: QueueState;
+  /** Present only for a copy-limited (ELITE) title with no copy free right now — the moment the
+   * reader's place in the queue was created (or, if they were already queued, when it originally
+   * was). CONFIRMED AGAINST `tf_reader_backend_temp`'s `ReadingSessionResponse` record: this is a
+   * flat `Instant` field, not the richer `{queueId, position, queueLength, readNow, estimatedAt}`
+   * shape an earlier version of this file modeled and called `queue` — that shape was never sent
+   * by the real backend and nothing in this app ever read it. Queue position/length/ETA live on
+   * `GET /api/v1/holds`, not here (the real backend joins the queue on the reader's behalf inside
+   * this same call — see `openBook.ts`/`downloadManager.ts` for why `content === undefined` with
+   * this field present means "queued", not "malformed"). */
+  holdCreatedAt?: string;
   /** @deprecated Never sent by the real backend (confirmed) — it sends `licenceId` (above)
    * instead. Kept only because the published flambeau spec this file originally modeled names it;
    * nothing in this app reads it. */

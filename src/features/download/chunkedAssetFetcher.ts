@@ -32,12 +32,19 @@ import { DownloadError, DownloadFailure } from './errors';
 
 export const CHUNK_SIZE_BYTES = 1024 * 1024; // 1 MiB — see this file's header for the reasoning
 
+// Once the total is known and the server supports Range, chunks fetch this many at a time
+// (Promise.all, written to disk in order) instead of one at a time — a high-latency link (e.g. a
+// VPN hop) pays its per-request overhead ~this-many-times less across a large book.
+const CONCURRENT_CHUNKS = 3;
+
 // Same abort-controller-plus-timer shape as every other network call in this directory. Smaller
-// than ASSET_FETCH_TIMEOUT_MS (60s) on purpose: that value was sized for the WHOLE asset;  one
-// 1 MiB chunk taking longer than 8s (~128 KiB/s floor) means the connection is bad enough that
-// waiting on THIS chunk isn't worth it — a fresh chunk request (still resumable from here) is a
-// better use of the time than one long wait.
-const CHUNK_TIMEOUT_MS = 8000;
+// than ASSET_FETCH_TIMEOUT_MS (60s) on purpose: that value was sized for the WHOLE asset; one
+// 1 MiB chunk taking longer than this means the connection is bad enough that waiting on THIS
+// chunk isn't worth it — a fresh chunk request (still resumable from here) is a better use of the
+// time than one long wait. Scaled by CONCURRENT_CHUNKS because up to that many requests now share
+// one connection's bandwidth — the original 8s (~128 KiB/s floor) assumed a single in-flight
+// request; unscaled, concurrent chunks would spuriously time out under their own contention.
+const CHUNK_TIMEOUT_MS = 8000 * CONCURRENT_CHUNKS;
 
 // Deliberately its own directory, separate from contentStore.ts's `tf-reader-content/` — a
 // partial file must never be mistaken for a complete, verified package by anything that scans
@@ -172,7 +179,11 @@ export async function fetchEncryptedAssetChunked(
     discardPartialDownload(bookId);
   }
 
-  while (expectedLength === null || bytesReceived < expectedLength) {
+  // First request: establishes expectedLength (from Content-Range, or from an already-resumed
+  // manifest above) and handles a server with no Range support in one shot. Kept single-request
+  // and unbatched deliberately — until expectedLength/Range-support is known, there is nothing
+  // yet to batch.
+  while (expectedLength === null) {
     const rangeEnd = bytesReceived + CHUNK_SIZE_BYTES - 1;
     const response = await fetchRange(bookId, url, bytesReceived, rangeEnd);
 
@@ -200,15 +211,64 @@ export async function fetchEncryptedAssetChunked(
       return whole;
     }
 
-    if (expectedLength === null) {
-      expectedLength = total;
-      assertWithinBudget(bookId, expectedLength, options.maxBytes);
-    }
+    expectedLength = total;
+    assertWithinBudget(bookId, expectedLength, options.maxBytes);
 
     appendOrCreate(contentFile, chunkBytes, bytesReceived > 0);
     bytesReceived += chunkBytes.length;
     writeManifest(bookId, { url, expectedLength, bytesReceived });
     options.onProgress?.(bytesReceived, expectedLength);
+  }
+
+  // Steady state: expectedLength and Range support are both confirmed. Fetch up to
+  // CONCURRENT_CHUNKS ranges at once — Promise.all preserves result order to match request order
+  // regardless of which one lands first on the wire, so writing/advancing through `responses` in
+  // order keeps the manifest a genuinely contiguous, disk-backed prefix at every step, exactly as
+  // the single-chunk loop above already does.
+  const total = expectedLength;
+  while (bytesReceived < total) {
+    const batchStarts: number[] = [];
+    let offset = bytesReceived;
+    for (let i = 0; i < CONCURRENT_CHUNKS && offset < total; i++) {
+      batchStarts.push(offset);
+      offset += CHUNK_SIZE_BYTES;
+    }
+
+    // allSettled, not all — a batch where one request truly network-rejects (not just a non-206
+    // status) must not discard SIBLINGS THAT ALREADY SUCCEEDED. Promise.all rejects the whole
+    // batch the instant any one member rejects, losing every already-resolved response in that
+    // same array even though nothing is wrong with them. Processing settled results strictly in
+    // order and throwing at the FIRST failure (rejection, or a non-206 status once Range support
+    // is already confirmed) still stops writing/advancing at exactly that point — nothing past
+    // it, contiguous or not, is ever written — so contiguity is preserved exactly as it is for
+    // the single-chunk loop above; only the earlier, still-good writes are no longer lost with it.
+    const settled = await Promise.allSettled(
+      batchStarts.map((start) =>
+        fetchRange(bookId, url, start, Math.min(start + CHUNK_SIZE_BYTES - 1, total - 1)),
+      ),
+    );
+
+    for (const result of settled) {
+      if (result.status === 'rejected') {
+        throw result.reason;
+      }
+      const response = result.value;
+      // Once in steady state, Range support is already proven (by the first request's 206) —
+      // any other status here is anomalous enough to fail closed rather than risk assembling a
+      // differently-shaped body into the middle of an otherwise chunked file.
+      if (response.status !== 206) {
+        throw new DownloadFailure(
+          DownloadError.ASSET_FETCH_FAILED,
+          bookId,
+          new Error(`encrypted asset fetch responded ${response.status}`),
+        );
+      }
+      const chunkBytes = new Uint8Array(await response.arrayBuffer());
+      appendOrCreate(contentFile, chunkBytes, bytesReceived > 0);
+      bytesReceived += chunkBytes.length;
+      writeManifest(bookId, { url, expectedLength: total, bytesReceived });
+      options.onProgress?.(bytesReceived, total);
+    }
   }
 
   const assembled = contentFile.bytesSync();

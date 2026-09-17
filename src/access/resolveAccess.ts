@@ -197,12 +197,12 @@ export function resolveAccess({
     // 5b · a copy is being offered right now.
     //
     // CORRECTED 17 Aug. This used to say the offer could arrive "straight back
-    // from the Grant access tap when nobody was ahead". It cannot: `POST /holds`
+    // from the Request access tap when nobody was ahead". It cannot: `POST /holds`
     // documents only 200 and 201, and BOTH return `status: QUEUED`. There is no
     // response shape in which placing a hold hands back an offer, so nothing
     // should be wired to expect one.
     //
-    // THE REASON THE CASE NEVER ARISES IS UPSTREAM OF THAT. Grant access borrows
+    // THE REASON THE CASE NEVER ARISES IS UPSTREAM OF THAT. Request access borrows
     // first — `POST /loans` refuses with `409 NO_COPIES_AVAILABLE` and names the
     // hold endpoint so the app can offer the queue as a choice. So a reader only
     // ever holds when there was no free copy to take, and a hold placed against a

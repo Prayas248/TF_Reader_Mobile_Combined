@@ -193,10 +193,17 @@ export async function downloadBook(
   }
   const session: ReadingSessionResponse = license.session;
   // `session.content` is typed required but `readingSessionClient.ts` casts the raw response
-  // body with no runtime check — see `openBook.ts`'s identical guard for the observed case
-  // (a queue-waiting ELITE title's session predating actual access). Without this, the
-  // `session.content.url` reads below throw a bare TypeError instead of a caught failure.
+  // body with no runtime check — see `openBook.ts`'s identical guard, including why
+  // `holdCreatedAt` present means "queued", not "malformed" (a copy-limited title with none
+  // free joins the queue inside this same call rather than a separate refusal). Kept here too
+  // even though today's UI never offers Download on the one tier this applies to (ELITE) — see
+  // this file's own `DOWNLOAD_NOT_PERMITTED`/`FAIL_CLOSED_CODES` handling, which already refuses
+  // an ELITE `DOWNLOAD` intent before this line runs. Defense in depth, not dead code: a future
+  // tier gaining a copy limit would hit this path with no other warning.
   if (session.content === undefined) {
+    if (session.holdCreatedAt !== undefined) {
+      throw new DownloadFailure(DownloadError.NO_COPIES_AVAILABLE, bookId);
+    }
     throw new DownloadFailure(
       DownloadError.SESSION_FETCH_FAILED,
       bookId,
