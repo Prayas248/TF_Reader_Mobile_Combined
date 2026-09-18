@@ -532,7 +532,13 @@ describe('ItemDetailScreen with a book', () => {
       expect(screen.queryByText('Play')).toBeNull();
     });
 
-    it('opens the book and navigates to the AudioPlayer, not the Reader', async () => {
+    // Navigates straight to the AudioPlayer with NO openBook() pre-check, unlike EPUB/PDF's
+    // Read — see ItemDetailScreen.tsx's 'read'/'play' branch: a pre-check call here would claim
+    // a real copy-lease slot on a copy-limited (ELITE) title's backend budget just to throw the
+    // result away, and AudioPlayerScreen's own resolveAudioAssetUri() immediately claims a
+    // second one to actually play it, so a single tap could exhaust the whole budget by itself.
+    // AudioPlayerScreen has its own "Couldn't load this title" error screen for a real failure.
+    it('navigates straight to the AudioPlayer with no openBook() pre-check', async () => {
       setCatalogueSource(
         fakeSource(async () =>
           aBook({ format: 'AUDIO', acquisition: anAcquisition({ licenceModel: 'OPEN_ACCESS' }) }),
@@ -544,11 +550,6 @@ describe('ItemDetailScreen with a book', () => {
       await waitFor(() => expect(screen.getByText('Play')).toBeTruthy());
       fireEvent.press(screen.getByText('Play'));
 
-      await waitFor(() => expect(mockOpenBook).toHaveBeenCalledWith('item_42', 'AUDIO'));
-      // AUDIO opens the audio player, not the EPUB/PDF reader — the two are
-      // separate screens with unrelated implementations underneath (expo-audio
-      // vs. the epub.js/pdf.js WebView bridge). See ItemDetailScreen.tsx's
-      // 'read'/'play' branch.
       await waitFor(() =>
         expect(mockNavigate).toHaveBeenCalledWith('AudioPlayer', {
           bookId: 'item_42',
@@ -556,6 +557,7 @@ describe('ItemDetailScreen with a book', () => {
         }),
       );
       expect(mockNavigate).not.toHaveBeenCalledWith('Reader', expect.anything());
+      expect(mockOpenBook).not.toHaveBeenCalled();
     });
   });
 
@@ -1394,7 +1396,12 @@ describe('ItemDetailScreen — holdings joined from library store', () => {
   // reading-session response — see openBook.ts's guard. That code must not show the generic
   // "couldn't be completed" message, because refresh() (already called in the same .finally())
   // is about to show the reader their queue position instead — a status, not an error.
-  it('shows no generic failure message when Read is queued (NO_COPIES_AVAILABLE)', async () => {
+  // With an active loan (the only way "Read" shows for ELITE at all), a single
+  // NO_COPIES_AVAILABLE is a transient lease-contention blip, not a genuine queue case — see
+  // ItemDetailScreen.tsx's retry comment. `mockOpenBook`'s default resolved value backs the
+  // retry's second call, so this pins "retry succeeds, no error, navigates" — not just "no error
+  // shown", which used to be the whole assertion before the retry existed.
+  it('retries once and navigates when Read hits a transient NO_COPIES_AVAILABLE with an active loan', async () => {
     selectAndSignIn(INSTITUTION);
     const loan = {
       loanId: 'loan_1',
@@ -1414,10 +1421,54 @@ describe('ItemDetailScreen — holdings joined from library store', () => {
     await render(<ItemDetailScreen {...routeProps} />);
 
     await waitFor(() => expect(screen.getByText('Read')).toBeTruthy());
+    // `mockOpenBook`'s call count is cumulative across this whole file (never cleared in
+    // `afterEach`) — clear it here so the assertion below counts only this test's own calls.
+    mockOpenBook.mockClear();
     fireEvent.press(screen.getByText('Read'));
 
-    await waitFor(() => expect(mockOpenBook).toHaveBeenCalled());
+    // Waits on the terminal outcome (navigation), not an intermediate call count — the retry's
+    // own 500ms delay means `mockOpenBook`'s 2nd call and the `navigate` that follows it don't
+    // land in the same microtask as the 1st call.
+    await waitFor(
+      () => expect(mockNavigate).toHaveBeenCalledWith('Reader', { bookId: 'item_42', format: 'PDF' }),
+      { timeout: 3000 },
+    );
+    expect(mockOpenBook).toHaveBeenCalledTimes(2);
     expect(screen.queryByText("That action couldn't be completed. Please try again.")).toBeNull();
+  });
+
+  // The retry is bounded — if it fails twice in a row, this must no longer stay silent (that
+  // silence was the original bug report: Read looked like it did nothing at all).
+  it('shows the generic failure message when Read hits NO_COPIES_AVAILABLE twice in a row with an active loan', async () => {
+    selectAndSignIn(INSTITUTION);
+    const loan = {
+      loanId: 'loan_1',
+      itemId: 'item_42',
+      state: 'active' as const,
+      expiresAt: 9_999_999_999,
+    };
+    useLibraryStore.setState({ loans: [loan], holds: [] });
+    mockGetLibrary.mockResolvedValue({ loans: [loan], holds: [] });
+    setCatalogueSource(
+      fakeSource(async () => aBook({ acquisition: anAcquisition({ licenceModel: 'ELITE' }) })),
+    );
+    mockOpenBook.mockRejectedValue(new DownloadFailure(DownloadError.NO_COPIES_AVAILABLE, 'item_42'));
+
+    await render(<ItemDetailScreen {...routeProps} />);
+
+    await waitFor(() => expect(screen.getByText('Read')).toBeTruthy());
+    mockOpenBook.mockClear();
+    fireEvent.press(screen.getByText('Read'));
+
+    // Waits on the terminal outcome — the generic message only appears after the retry's own
+    // 500ms delay has elapsed and failed a second time.
+    await waitFor(
+      () =>
+        expect(screen.getByText("That action couldn't be completed. Please try again.")).toBeTruthy(),
+      { timeout: 3000 },
+    );
+    expect(mockOpenBook).toHaveBeenCalledTimes(2);
+    expect(mockNavigate).not.toHaveBeenCalledWith('Reader', expect.anything());
   });
 
   // The other branch of the same guard: a genuinely different openBook() failure (not a queue)

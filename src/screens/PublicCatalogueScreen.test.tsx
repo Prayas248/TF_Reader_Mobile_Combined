@@ -28,10 +28,14 @@ jest.mock('@hooks/useNetworkStatus', () => ({
   useNetworkStatus: () => mockUseNetworkStatus(),
 }));
 
+// Carries an isbn — a real open-access BOOK, for `looksLikeJournalArticle`'s purposes (see
+// PublicCatalogueScreen.tsx's header). Every existing test in this file predates the Books/
+// Journal articles split and expects these fixtures to land in "Books", unchanged.
 function openAccessTitle(id: string, title: string): Publication {
   return {
     id,
     title,
+    isbn: `978-0-00-${id}-0`,
     publisher: 'Routledge',
     authors: [],
     subjects: [],
@@ -487,3 +491,4 @@ describe('PublicCatalogueScreen — D12 exclusion', () => {
     expect(screen.queryByTestId('content-card-action')).toBeNull();
   });
 });
+

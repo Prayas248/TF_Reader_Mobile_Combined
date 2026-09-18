@@ -44,25 +44,24 @@
 // second reason would still stand on its own until this screen gains an
 // institution, or flambeau grows a way to queue anonymously.
 //
-// ─── NO JOURNALS HERE, AND IT IS A REAL BACKEND GAP, NOT A TODO ─────────────
+// ─── JOURNALS, AS REAL CONTAINERS — shipped backend-side 2026-09-17 ─────────
 //
-// CatalogueScreen.tsx (the institution-selected screen) has a "Journals"
-// section, built from that institution's own `getHomeCatalogue()` navigation
-// entries and browsed with `getWork(institutionId, workId)`. Neither has a
-// no-institution counterpart: `getPublicFeed()` (what THIS screen calls)
-// returns a `Shelf` — a flat publications list with no `navigation` field at
-// all — and `CatalogueSource`'s interface has no `getPublicWork`. wokay's
-// contract has never published a "list every public journal" endpoint or a
-// way to fetch a journal/volume/issue feed without an institution id (the
-// real endpoint is literally `/opds/v1/institutions/{id}/works/{workId}`).
+// The public catalogue used to dump individual journal articles flat among
+// real books, with no journal/volume/issue id anywhere on them. FIXED on the
+// backend (`tf_reader_backend_temp`'s `OpdsPublicFeedService.catalogueFeed()`):
+// it now queries top-level items only and emits each JOURNAL as its own
+// container entry (a `subsection` link + cover, no acquisition link) instead
+// of flattening its articles — confirmed live. `normalizeShelf`
+// (`model/opds/normalize.ts`) partitions these into `Shelf.journals` rather
+// than `Shelf.publications`, since `normalizePublication` requires a
+// self+acquisition link no journal container has.
 //
-// A client-side workaround was considered — fetch every known institution's
-// catalogue and merge their journal entries into one list — and rejected: it
-// does not scale (N full catalogue fetches for one preview section, against
-// however many institutions the real backend has, not the two dev fixtures),
-// and the same journal held by several institutions would show up once per
-// institution rather than once. This needs a real backend capability (a
-// public journals list, and a public work-fetch), not a screen change.
+// STILL NO DRILL-DOWN FROM HERE, THOUGH — tapping a journal needs
+// `getWork(institutionId, workId)`'s no-institution equivalent
+// (`getPublicWork`, and a public `GET /works/{workId}` endpoint), which don't
+// exist yet. Rendered as a plain (non-interactive) grid for now — wiring
+// `Journal`/`JournalVolumes`/`JournalIssue` navigation with a null
+// institutionId is the next step, not done in this pass.
 import { useCallback, useEffect, useState } from 'react';
 import {
   Pressable,
@@ -83,11 +82,12 @@ import { ContentCard, COVER_TILE_WIDTH } from '../components/ContentCard';
 import { ErrorState } from '@components/ErrorState';
 import { FilterSortButton } from '@components/FilterSortButton';
 import { FilterSortSheet } from '@components/FilterSortSheet';
+import { HeroBanner } from '@components/HeroBanner';
 import { SectionHeader } from '@components/SectionHeader';
 import { getCatalogueSource } from '../config/catalogue';
 import { type CatalogueError, isCatalogueFailure } from '@model/errors';
 import { CATALOGUE_ERROR_COPY, catalogueErrorVariant } from '@model/errorCopy';
-import type { Publication, SortOrder } from '../model/types';
+import type { NavLink, Publication, SortOrder } from '../model/types';
 import type { CatalogueStackParamList } from '../navigation/types';
 import type { BrowseFilters } from '@search/browseLink';
 import { PUBLIC_FEED, useFeedScrollMemory } from '@hooks/useFeedScrollMemory';
@@ -178,6 +178,7 @@ export default function PublicCatalogueScreen() {
   );
 
   const [publications, setPublications] = useState<Publication[]>([]);
+  const [journals, setJournals] = useState<NavLink[]>([]);
   // The cursor, taken off the response's own `next` link. `undefined` means
   // there is no next page.
   const [nextPage, setNextPage] = useState<number | undefined>(undefined);
@@ -212,6 +213,7 @@ export default function PublicCatalogueScreen() {
       .getPublicFeed()
       .then((feed) => {
         setPublications(feed.publications);
+        setJournals(feed.journals ?? []);
         setNextPage(feed.nextPage);
       })
       .catch((err: unknown) => {
@@ -269,6 +271,10 @@ export default function PublicCatalogueScreen() {
           const seen = new Set(previous.map((publication) => publication.id));
           return [...previous, ...feed.publications.filter(({ id }) => !seen.has(id))];
         });
+        setJournals((previous) => {
+          const seen = new Set(previous.map((journal) => journal.workId));
+          return [...previous, ...(feed.journals ?? []).filter(({ workId }) => !seen.has(workId))];
+        });
         setNextPage(feed.nextPage);
         setMoreStatus('idle');
       })
@@ -292,12 +298,59 @@ export default function PublicCatalogueScreen() {
     );
   }
 
-  const visiblePublications = applyBrowseFilters(publications, appliedFilters, appliedSort);
-  const isEmpty = !loading && visiblePublications.length === 0;
+  const books = applyBrowseFilters(publications, appliedFilters, appliedSort);
+  const isEmpty = !loading && books.length === 0 && journals.length === 0;
   const hasActiveFilter =
     appliedSort !== undefined ||
     Object.values(appliedFilters).some((value) => value !== undefined);
   const moreLabel = moreLabelFor(moreStatus);
+
+  const renderGrid = (
+    items: Publication[],
+    options: { placeholderIcon?: 'newspaper-outline'; workType?: 'article' } = {},
+  ) =>
+    chunkPairs(items).map((pair, rowIndex) => (
+      <View key={rowIndex} style={styles.gridRow}>
+        {pair.map((publication) => {
+          // Resolved once rather than inline in the badge, so D8 can ask
+          // about the state before anything reads the tier.
+          const access = resolveAccess({
+            item: publication,
+            institutionId: null,
+            session: null,
+          });
+
+          return (
+            <View key={publication.id} style={{ width: columnWidth }}>
+              <ContentCard
+                variant="cover"
+                title={publication.title}
+                publisher={publication.publisher}
+                imageUrl={publication.coverUrl}
+                placeholderIcon={options.placeholderIcon}
+                format={publication.format}
+                // D8 — `not_entitled` renders nothing at all, badge
+                // included. The tier is an OPEN_ACCESS filler in that
+                // state, which on THIS screen would be doubly
+                // misleading: a list of open access titles is exactly
+                // where a false "Open Access" chip would go unnoticed.
+                badge={
+                  isNotEntitled(access) ? undefined : (
+                    <AccessTierBadge tier={access.tier} />
+                  )
+                }
+                onPress={() =>
+                  navigation.navigate('ItemDetail', {
+                    itemId: publication.id,
+                    workType: options.workType,
+                  })
+                }
+              />
+            </View>
+          );
+        })}
+      </View>
+    ));
 
   return (
     <View style={styles.screen}>
@@ -312,6 +365,11 @@ export default function PublicCatalogueScreen() {
         style={styles.screen}
         contentContainerStyle={styles.content}
       >
+        <HeroBanner
+          title="The Open Shelf"
+          subtitle="Every open-access title on Nexus — free to read, no institution or sign-in required."
+        />
+
         <SectionHeader
           title="Open Access Titles"
           emphasis="editorial"
@@ -342,44 +400,31 @@ export default function PublicCatalogueScreen() {
           />
         )}
 
-        {chunkPairs(visiblePublications).map((pair, rowIndex) => (
-          <View key={rowIndex} style={styles.gridRow}>
-            {pair.map((publication) => {
-              // Resolved once rather than inline in the badge, so D8 can ask
-              // about the state before anything reads the tier.
-              const access = resolveAccess({
-                item: publication,
-                institutionId: null,
-                session: null,
-              });
+        {books.length > 0 && (
+          <>
+            <SectionHeader title="Books" />
+            {renderGrid(books)}
+          </>
+        )}
 
-              return (
-                <View key={publication.id} style={{ width: columnWidth }}>
-                  <ContentCard
-                    variant="cover"
-                    title={publication.title}
-                    publisher={publication.publisher}
-                    imageUrl={publication.coverUrl}
-                    format={publication.format}
-                    // D8 — `not_entitled` renders nothing at all, badge
-                    // included. The tier is an OPEN_ACCESS filler in that
-                    // state, which on THIS screen would be doubly
-                    // misleading: a list of open access titles is exactly
-                    // where a false "Open Access" chip would go unnoticed.
-                    badge={
-                      isNotEntitled(access) ? undefined : (
-                        <AccessTierBadge tier={access.tier} />
-                      )
-                    }
-                    onPress={() =>
-                      navigation.navigate('ItemDetail', { itemId: publication.id })
-                    }
-                  />
-                </View>
-              );
-            })}
-          </View>
-        ))}
+        {/* Non-interactive for now — no onPress. Drilling in needs `getPublicWork`/a public
+            `GET /works/{workId}` endpoint, neither of which exists yet (see this file's header).
+            Showing the real cover/title without a dead tap target is more honest than either
+            hiding these entirely or wiring a tap to a route that would fail. */}
+        {journals.length > 0 && (
+          <>
+            <SectionHeader title="Journals" />
+            {chunkPairs(journals).map((pair, rowIndex) => (
+              <View key={rowIndex} style={styles.gridRow}>
+                {pair.map((journal) => (
+                  <View key={journal.workId} style={{ width: columnWidth }}>
+                    <ContentCard variant="cover" title={journal.title} imageUrl={journal.coverUrl} />
+                  </View>
+                ))}
+              </View>
+            ))}
+          </>
+        )}
 
         {/* Absent, not disabled, on the last page: a permanently dead button
             reads as broken. */}

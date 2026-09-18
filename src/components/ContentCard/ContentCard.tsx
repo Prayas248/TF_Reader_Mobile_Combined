@@ -23,7 +23,7 @@
 //
 // It sets no outer width, margin or position (CONVENTIONS §8) — the list that
 // lays the rows out owns that.
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import {
   AccessibilityInfo,
   Animated,
@@ -57,6 +57,13 @@ export interface ContentCardProps {
   // Cover art. Absent renders a placeholder rather than failing: no fixture
   // publication carries a `thumbnailUrl`, so this is the common path today.
   imageUrl?: string;
+  // The icon shown in the placeholder well when there's no cover (missing or
+  // failed to load) — defaults to the plain 'image-outline' every existing
+  // caller already gets. A screen with its own reason a title has no cover
+  // (e.g. PublicCatalogueScreen's journal articles, which never carry one)
+  // can hand over a more specific icon so the well reads as a deliberate
+  // stand-in for THAT reason, not as a broken fetch.
+  placeholderIcon?: ComponentProps<typeof Ionicons>['name'];
   // The book's own file type, already derived — 'PDF', 'EPUB' or 'AUDIO'. A
   // plain string, not a ContentFormat, for the same reason `badge` is a node:
   // this file imports nothing from @model, so it cannot reach past what it is
@@ -266,6 +273,7 @@ export default function ContentCard({
   title,
   publisher,
   imageUrl,
+  placeholderIcon = 'image-outline',
   format,
   authors,
   meta,
@@ -341,7 +349,7 @@ export default function ContentCard({
               testID="content-card-placeholder"
               style={[styles.coverThumb, styles.placeholderCenter]}
             >
-              <Ionicons name="image-outline" size={ICON_SIZE} color={color.textSecondary} />
+              <Ionicons name={placeholderIcon} size={ICON_SIZE} color={color.textSecondary} />
             </View>
           ) : (
             <Image
@@ -414,7 +422,7 @@ export default function ContentCard({
               testID="content-card-placeholder"
               style={[styles.thumb, styles.placeholderCenter]}
             >
-              <Ionicons name="image-outline" size={ICON_SIZE} color={color.textSecondary} />
+              <Ionicons name={placeholderIcon} size={ICON_SIZE} color={color.textSecondary} />
             </View>
           ) : (
             <Image

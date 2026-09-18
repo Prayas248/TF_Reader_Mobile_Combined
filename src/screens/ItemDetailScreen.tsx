@@ -981,16 +981,41 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
           .then(() => {
             navigation.navigate('Reader', { bookId: itemId as BookId, format });
           })
-          .catch((err: unknown) => {
+          .catch(async (err: unknown) => {
+            // NO_COPIES_AVAILABLE here USED TO always mean "the real backend joined this
+            // reader's Elite hold queue inside the same call that would otherwise have opened
+            // the book" — silent on purpose, since `refresh()` below would show the queue
+            // position instead of an error. That holds when nothing was held yet. It does NOT
+            // hold for a reader who already has an ACTIVE LOAN (a normal re-open): resolveAccess's
+            // ELITE branch checks `loan?.state === 'active'` before it ever looks at hold state,
+            // so a stray hold from this failed attempt never surfaces as a queued status — the
+            // screen just sits there looking like the tap did nothing. Confirmed live: the
+            // backend's shared copy-lease pool has no explicit early release (every
+            // openReadingSession call, including readerAssets.ts's own per-open
+            // verifyReadingAccess re-check, holds a lease for up to 5 minutes), so this is a
+            // real, transient contention blip for an already-entitled reader, not a genuine
+            // "join the queue" case. One retry after a short delay is the honest fix for THAT
+            // case; if it still fails, this is a real failure and must not stay silent.
+            if (
+              err instanceof DownloadFailure &&
+              err.code === DownloadError.NO_COPIES_AVAILABLE &&
+              loan?.state === 'active'
+            ) {
+              await new Promise((resolve) => setTimeout(resolve, 500));
+              try {
+                await openBook(itemId as BookId, format);
+                navigation.navigate('Reader', { bookId: itemId as BookId, format });
+                return;
+              } catch (retryErr) {
+                // The retry had the SAME fair chance the original tap did — a second failure,
+                // whatever its code, is a real failure now and must not stay silent the way the
+                // first attempt's NO_COPIES_AVAILABLE deliberately does.
+                console.error('[read] openBook failed on retry:', retryErr);
+                setLicenceMessage(LICENCE_GENERIC_MESSAGE);
+                return;
+              }
+            }
             console.error('[read] openBook failed:', err);
-            // NO_COPIES_AVAILABLE here is not a failure to report — it means the real backend
-            // joined this reader's Elite hold queue INSIDE the same call that would otherwise
-            // have opened the book (see openBook.ts's guard). `refresh()` below re-fetches
-            // GET /api/v1/library, which now carries that hold, and resolveAccess() renders the
-            // queue position as a status with no button — exactly the "a queue position is a
-            // status, never an error" rule this screen already follows for `grantAccess`
-            // (borrowOrPlaceHold). Showing the generic message here would tell the reader their
-            // tap failed at the same moment the screen is about to show them their place in line.
             if (!(err instanceof DownloadFailure && err.code === DownloadError.NO_COPIES_AVAILABLE)) {
               setLicenceMessage(LICENCE_GENERIC_MESSAGE);
             }

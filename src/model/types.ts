@@ -306,6 +306,11 @@ export interface Shelf {
   id: string;
   title: string;
   publications: Publication[];
+  // Journal containers found inline among `publications` (real public catalogue behavior,
+  // confirmed live 2026-09-17) — kept apart from `publications` rather than mixed in, since a
+  // journal has no acquisition of its own and needs a different card/tap (getWork drill-down, not
+  // openBook). Absent when the feed carried none.
+  journals?: NavLink[];
   // Server-reported total across all pages. Absent on home-screen shelves,
   // which are previews rather than paginated listings.
   totalItems?: number;

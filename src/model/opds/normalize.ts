@@ -228,6 +228,43 @@ function toWorkType(value: unknown): WorkType | undefined {
   return typeof value === 'string' ? WOKAY_TYPE_MAP[value] : undefined;
 }
 
+// A journal container inline in a flat `publications` array — CONFIRMED LIVE, 2026-09-17: the
+// real public catalogue feed now sends these directly (no separate "Journals" group the way the
+// authenticated feed does it), shaped with only a `subsection` link, no `self`, no acquisition
+// link. `normalizePublication` requires both and would throw on one of these — checked BEFORE
+// calling it, not inside it, so a caller that doesn't expect journals (any other feed) is
+// unaffected.
+function isJournalContainer(doc: unknown): boolean {
+  if (typeof doc !== 'object' || doc === null || !('links' in doc)) return false;
+  const links = (doc as { links: unknown }).links;
+  if (!Array.isArray(links)) return false;
+  const hasSelf = links.some((raw) => asRecord(raw, 'link').rel === 'self');
+  const hasSubsection = links.some((raw) => asRecord(raw, 'link').rel === 'subsection');
+  return !hasSelf && hasSubsection;
+}
+
+// Like `toJournalCover`, but returns a full `NavLink` (title included) — this file's other
+// journal-cover path gets its title from a separate `navigation` entry and only merges the cover
+// in; a journal arriving inline in `publications` has nothing else to merge with, so this pulls
+// both from the one entry it gets.
+function toJournalNavLink(doc: unknown): NavLink {
+  const publication = asRecord(doc, 'journal publication');
+  const metadata = asRecord(publication.metadata, 'journal publication metadata');
+  const links = asArray(publication.links, 'journal publication links');
+  const subsection = findLink(links, (rel) => rel === 'subsection');
+  if (subsection === undefined) throw malformed('journal publication has no subsection link');
+  const href = reqString(subsection.href, 'journal publication subsection href');
+  const { coverUrl } = toImages(publication.images);
+  return {
+    title: reqString(metadata.title, 'journal publication title'),
+    href,
+    shelfId: idFromHref(href),
+    target: 'works',
+    workId: idFromHref(href),
+    ...(coverUrl !== undefined ? { coverUrl } : {}),
+  };
+}
+
 export function normalizePublication(doc: unknown): Publication {
   const publication = asRecord(doc, 'publication');
   const metadata = asRecord(publication.metadata, 'publication metadata');
@@ -305,15 +342,22 @@ export function normalizeShelf(doc: unknown): Shelf {
   const totalItems = optNumber(metadata.numberOfItems);
   const itemsPerPage = optNumber(metadata.itemsPerPage);
 
+  // Partitioned, not mapped straight through `normalizePublication` — see `isJournalContainer`.
+  // A journal entry inline here would otherwise throw (no self/acquisition link) and take the
+  // WHOLE feed down with it, confirmed live 2026-09-17 once the public catalogue started sending
+  // these.
+  const rawPublications = shelf.publications === undefined
+    ? []
+    : asArray(shelf.publications, 'shelf publications');
+  const journalEntries = rawPublications.filter(isJournalContainer);
+
   return {
     id: idFromHref(reqString(self.href, 'shelf self href')),
     title: reqString(metadata.title, 'shelf title'),
     // Absent is the zero-result case, not a malformed feed: the contract does
     // not require `publications`, and getGroupFeed says `all` never 404s.
-    publications:
-      shelf.publications === undefined
-        ? []
-        : asArray(shelf.publications, 'shelf publications').map(normalizePublication),
+    publications: rawPublications.filter((entry) => !isJournalContainer(entry)).map(normalizePublication),
+    ...(journalEntries.length > 0 ? { journals: journalEntries.map(toJournalNavLink) } : {}),
     ...(totalItems !== undefined ? { totalItems } : {}),
     ...(itemsPerPage !== undefined ? { itemsPerPage } : {}),
     ...(next !== undefined
