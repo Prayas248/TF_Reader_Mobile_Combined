@@ -128,7 +128,7 @@ export type CatalogueStackParamList = {
   // ItemDetailScreen's 'read' action after openBook() resolves. `initialTarget` is
   // optional and orthogonal to progressStore's own resume mechanism: most callers never
   // pass it and let the reader resume from the last saved position.
-  Reader: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTarget };
+  Reader: { bookId: BookId; format: ContentFormat; title?: string; initialTarget?: ReaderTarget };
   // Accessibility's publication-info screen, pushed from ReaderRouteScreen's info button.
   // No `format` param — re-derived via getPublicationAccessibility's own getFormat(bookId).
   BookInfo: { bookId: BookId };
@@ -155,7 +155,7 @@ export type SearchStackParamList = {
   PersonalAccount: { mode: PersonalAccountMode };
   // Same reader engine seam as CatalogueStackParamList.Reader — registered here too so
   // "Read" from a Search result doesn't have to jump to the Catalogue tab.
-  Reader: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTarget };
+  Reader: { bookId: BookId; format: ContentFormat; title?: string; initialTarget?: ReaderTarget };
   BookInfo: { bookId: BookId };
   // Same reason as CatalogueStackParamList.AudioPlayer — see its own comment.
   AudioPlayer: { bookId: BookId; title: string; coverUrl?: string };
@@ -197,7 +197,7 @@ export type LibraryStackParamList = {
   AccessGate: { itemId: string; title: string; authors: string };
   SignIn: undefined;
   PersonalAccount: { mode: PersonalAccountMode };
-  Reader: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTarget };
+  Reader: { bookId: BookId; format: ContentFormat; title?: string; initialTarget?: ReaderTarget };
   BookInfo: { bookId: BookId };
   // Same reason as CatalogueStackParamList.AudioPlayer — see its own comment.
   AudioPlayer: { bookId: BookId; title: string; coverUrl?: string };

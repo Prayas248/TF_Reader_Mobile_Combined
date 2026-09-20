@@ -63,6 +63,7 @@ function fakeSource(getInstitution: DataSource['getInstitution']): DataSource {
     getShelf: unused,
     getPublication: unused,
     getPublicFeed: unused,
+    getPublicJournals: unused,
     getPublicPublication: unused,
     getInstitutions: unused,
     getInstitution,

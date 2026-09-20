@@ -9,7 +9,15 @@
 // Both implementations are held to `conformance.ts`. If a method's contract
 // changes, change it here and the suite will fail for both until they agree.
 import type { BookId } from '@/shared/types/primitives';
-import type { BatchItemsResult, Catalogue, Publication, Shelf, SortOrder, WorkFeed } from '@model/types';
+import type {
+  BatchItemsResult,
+  Catalogue,
+  Publication,
+  PublicJournal,
+  Shelf,
+  SortOrder,
+  WorkFeed,
+} from '@model/types';
 import type { BrowseFilters } from '@search/browseLink';
 
 // Everything a shelf request can narrow or order by, beyond page — an OPTIONAL
@@ -63,6 +71,19 @@ export interface CatalogueSource {
   // OpdsPublicationFeed. The name is the odd part, not the type — there is no
   // second parser and no second set of paging rules to keep in step.
   getPublicFeed(page?: number): Promise<Shelf>;
+
+  // The anonymous counterpart to getHomeCatalogue's "Journals" section —
+  // GET /opds/v1/public/journals. Every published journal, cover included,
+  // as a flat (unpaginated) list: there are only ever a handful of these, the
+  // same reason the institution-scoped root feed embeds its own "Journals"
+  // group inline rather than paging it.
+  //
+  // Returns `PublicJournal[]`, NOT `Shelf`/`Publication[]`: a journal has
+  // nothing of its own to acquire (no acquisition link on the wire), and
+  // `Publication` requires one — same reason `normalizeCatalogue`'s own
+  // Journals-group entries go through `toJournalCover`, not
+  // `normalizePublication`. See that function's own comment.
+  getPublicJournals(): Promise<PublicJournal[]>;
 
   // One publication for that same reader. Separate from `getPublication` for the
   // same reason as above: there is no institution to scope it by, and falling

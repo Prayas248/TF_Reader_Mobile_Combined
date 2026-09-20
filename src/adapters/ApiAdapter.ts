@@ -24,11 +24,17 @@
 // fresh — the same behaviour as before this existed, just with a chance to
 // skip the download on a warm one.
 import type { BookId } from '@/shared/types/primitives';
-import type { BatchItemsResult, Catalogue, Publication, Shelf, WorkFeed } from '@model/types';
+import type { BatchItemsResult, Catalogue, Publication, PublicJournal, Shelf, WorkFeed } from '@model/types';
 import type { DataSource, InstitutionQueryParams } from '@adapters/InstitutionSource';
 import type { ShelfQuery } from '@adapters/CatalogueSource';
 import { CatalogueError, CatalogueFailure, isCatalogueFailure } from '@model/errors';
-import { normalizeCatalogue, normalizePublication, normalizeShelf, normalizeWorkFeed } from '@model/opds/normalize';
+import {
+  normalizeCatalogue,
+  normalizePublication,
+  normalizePublicJournals,
+  normalizeShelf,
+  normalizeWorkFeed,
+} from '@model/opds/normalize';
 import { MAX_BATCH_IDS, normalizeBatchItemsResponse } from '@model/batchItems';
 import {
   type Institution,
@@ -292,6 +298,15 @@ export class ApiAdapter implements DataSource {
     // Filtered, not `forEach(assertPublication)` — see dropInvalidPublications
     // above for why this one feed does not fail whole-hog on one bad title.
     return { ...feed, publications: dropInvalidPublications(feed.publications) };
+  }
+
+  // Same "no institution, no auth header" reasoning as getPublicFeed just above
+  // (GET /opds/v1/public/journals), but parsed by normalizePublicJournals, not
+  // normalizeShelf — see PublicJournal's own comment for why a journal cannot
+  // go through the ordinary Publication pipeline at all.
+  async getPublicJournals(): Promise<PublicJournal[]> {
+    const body = await this.getJson(`${this.baseUrl}/opds/v1/public/journals`, 'public journals');
+    return normalizePublicJournals(body);
   }
 
   async getPublicPublication(bookId: BookId): Promise<Publication> {

@@ -2946,12 +2946,12 @@ describe('ReaderScreen bookmarks panel', () => {
       return within(screen.getByRole('button', { name: 'Bookmarks' }));
     }
 
-    it('is outline with no explicit colour when the current position is not bookmarked', async () => {
+    it("is outline in white (the toolbar's own colour) when the current position is not bookmarked", async () => {
       await mountReader();
       await deliver({ type: 'rendered' });
 
       const icon = bookmarksButton().getByText(glyphFor('bookmark-outline'));
-      expect(StyleSheet.flatten(icon.props.style).color).toBeUndefined();
+      expect(StyleSheet.flatten(icon.props.style).color).toBe(color.white);
     });
 
     it('fills in, in blue, once the current position matches a stored bookmark', async () => {

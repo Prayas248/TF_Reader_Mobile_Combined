@@ -68,7 +68,7 @@
 // rightmost" a layout guarantee instead of two files' pixel math staying in sync by luck.
 
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Alert, AppState, StyleSheet, View } from 'react-native';
@@ -110,12 +110,19 @@ const READER_PROGRESS_WRITE_THROTTLE_MS = 3_000;
 const READER_LIVE_SYNC_POLL_MS = 120_000;
 
 export function ReaderRouteScreen({ route, navigation }: Props): React.JSX.Element {
-  const { bookId, format, initialTarget: routeTarget } = route.params;
+  const { bookId, format, title: routeTitle, initialTarget: routeTarget } = route.params;
 
-  // Title only. DevPreferencesMenu is NOT headerRight — see this file's header note for why.
-  useLayoutEffect(() => {
-    navigation.setOptions({ title: format });
-  }, [navigation, format]);
+  // The native-stack header is hidden for this route (see RootNavigator.tsx) — ReaderScreen draws
+  // its own back button and title bar instead, matching AudioPlayerScreen's identical shape, so
+  // this no longer needs to feed `navigation.setOptions({ title })` for a header that isn't shown.
+
+  // Hides the shared four-tab bar for exactly this screen, same as ItemDetailScreen.tsx's identical
+  // effect (see that file's own comment for the full mechanism) — a full-screen reader has no tab
+  // bar to share space with.
+  useEffect(() => {
+    navigation.getParent()?.setOptions({ tabBarStyle: { display: 'none' } });
+    return () => navigation.getParent()?.setOptions({ tabBarStyle: undefined });
+  }, [navigation]);
 
   // Tagged with the bookId it resolved for, so a resolution in flight for a PREVIOUS book cannot
   // leak into this book's initialTarget — this screen persists across bookId param changes (see
@@ -393,6 +400,8 @@ export function ReaderRouteScreen({ route, navigation }: Props): React.JSX.Eleme
         ref={readerScreenRef}
         key={`${bookId}:${resumeGeneration}`}
         bookId={bookId}
+        title={routeTitle ?? format}
+        onBack={navigation.goBack}
         initialTarget={resolved.target}
         onRelocated={handleRelocated}
         onLocked={handleLocked}

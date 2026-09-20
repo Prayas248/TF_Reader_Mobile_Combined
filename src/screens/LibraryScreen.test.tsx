@@ -113,6 +113,7 @@ function fakeSource(getItemsBatch: DataSource['getItemsBatch']): DataSource {
     getShelf: unused,
     getPublication: unused,
     getPublicFeed: unused,
+    getPublicJournals: unused,
     getPublicPublication: unused,
     getInstitutions: unused,
     getInstitution: unused,

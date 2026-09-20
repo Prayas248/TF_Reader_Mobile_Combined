@@ -128,11 +128,15 @@ jest.mock('@/features/reader/audio/AudioPlayerScreen', () => {
   };
 });
 
+// Mirrors ItemDetailScreen.test.tsx's/ReaderRouteScreen.test.tsx's own `mockGetParent` —
+// AudioPlayerRouteScreen now hides the shared tab bar the same way those screens do.
+const mockGetParent = jest.fn(() => ({ setOptions: jest.fn() }));
+
 // `render` is ASYNC in @testing-library/react-native v14 — see App.test.tsx's own note.
 function renderAudioPlayerRoute(bookId: string, title = 'Audiobook') {
   return render(
     <AudioPlayerRouteScreen
-      navigation={{ setOptions: jest.fn() } as never}
+      navigation={{ setOptions: jest.fn(), getParent: mockGetParent } as never}
       route={{ key: 'AudioPlayer', name: 'AudioPlayer', params: { bookId, title } } as never}
     />,
   );
@@ -165,6 +169,7 @@ describe('AudioPlayerRouteScreen', () => {
     mockPause.mockReset();
     mockPullBook.mockReset();
     mockCurrentForBook.mockReset();
+    mockGetParent.mockClear();
     mockCurrentLocator.mockResolvedValue(null);
     mockSyncRun.mockResolvedValue(undefined);
     mockIsPlaying.mockReturnValue(false);
@@ -651,7 +656,7 @@ describe('AudioPlayerRouteScreen', () => {
 
       const { getByText, unmount } = await render(
         <AudioPlayerRouteScreen
-          navigation={{ setOptions: jest.fn(), setParams: mockSetParams } as never}
+          navigation={{ setOptions: jest.fn(), setParams: mockSetParams, getParent: mockGetParent } as never}
           route={
             {
               key: 'AudioPlayer',
@@ -688,7 +693,7 @@ describe('AudioPlayerRouteScreen', () => {
 
       const { getByText, unmount } = await render(
         <AudioPlayerRouteScreen
-          navigation={{ setOptions: jest.fn(), setParams: jest.fn() } as never}
+          navigation={{ setOptions: jest.fn(), setParams: jest.fn(), getParent: mockGetParent } as never}
           route={
             {
               key: 'AudioPlayer',

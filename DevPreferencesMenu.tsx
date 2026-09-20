@@ -379,7 +379,13 @@ function FontSizeSlider({
         },
         onPanResponderRelease: (evt) => {
           const next = valueFromX(evt.nativeEvent.locationX);
-          setDragValue(null);
+          // Keep showing `next`, NOT the stale `value` prop, until it actually catches up (the
+          // render-time check below clears it then — see that check's own comment). `onCommit`
+          // persists asynchronously; clearing dragValue here instead used to fall back to the old
+          // `value` for one paint, then jump to `next` once the async write resolved and
+          // prefsStore's subscribe fired — a visible revert-then-jump on every single release,
+          // which is what "glitching" was.
+          setDragValue(next);
           onCommit(next);
         },
         onPanResponderTerminate: () => {
@@ -388,6 +394,16 @@ function FontSizeSlider({
       }),
     [valueFromX, onCommit],
   );
+
+  // Adjusting state during render rather than in an effect — react.dev's "You Might Not Need an
+  // Effect" names exactly this shape ("adjusting some state when a prop changes") as the preferred
+  // form: React discards this render and re-renders synchronously with `dragValue` already cleared
+  // before anything paints, where an effect would paint the stale render first and correct it one
+  // frame later. Safe from a loop: this only fires while dragValue is non-null and equal to the
+  // now-caught-up value, and clearing it makes the condition false on the very next render.
+  if (dragValue !== null && value === dragValue) {
+    setDragValue(null);
+  }
 
   const handleTrackLayout = useCallback((event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);

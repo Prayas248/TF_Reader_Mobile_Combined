@@ -258,9 +258,17 @@ interface LibraryScreenProps {
     // reader wired behind it.
     navigate(
       screen: 'Reader',
-      params: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTargetLike },
+      params: {
+        bookId: BookId;
+        format: ContentFormat;
+        title?: string;
+        initialTarget?: ReaderTargetLike;
+      },
     ): void;
-    navigate(screen: 'AudioPlayer', params: { bookId: BookId; title: string }): void;
+    navigate(
+      screen: 'AudioPlayer',
+      params: { bookId: BookId; title: string; coverUrl?: string },
+    ): void;
   };
 }
 
@@ -548,10 +556,12 @@ export default function LibraryScreen({ navigation }: LibraryScreenProps) {
             coverUrl: summary?.coverUrl,
           });
         } else {
+          const summary = titles.get(bookmark.bookId);
           const target = bookmarkTarget(bookmark.locator);
           navigation.navigate('Reader', {
             bookId,
             format,
+            title: summary?.title,
             ...(target === undefined ? {} : { initialTarget: target }),
           });
         }

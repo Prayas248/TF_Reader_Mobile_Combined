@@ -338,6 +338,17 @@ export interface Catalogue {
   searchHref?: string;
 }
 
+// A journal on the anonymous (no-institution) browse screen — the public
+// counterpart to a NavLink with target 'works', minus the institution-scoped
+// fields ('href'/'shelfId') that concept carries and this one has no use for.
+// A journal is never a Publication (see normalizePublicJournals's own note):
+// it has nothing of its own to acquire, only a cover and a way to browse in.
+export interface PublicJournal {
+  workId: string;
+  title: string;
+  coverUrl?: string;
+}
+
 // One page of catalogue search results — what `normalizeSearchFeed` produces and
 // what the search pipeline (B1) hands the UI.
 //

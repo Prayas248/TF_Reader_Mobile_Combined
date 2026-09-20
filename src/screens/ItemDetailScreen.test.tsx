@@ -192,6 +192,7 @@ function fakeSource(getPublication: DataSource['getPublication']): DataSource {
     getShelf: unused,
     getPublication,
     getPublicFeed: unused,
+    getPublicJournals: unused,
     getPublicPublication: (bookId) => getPublication('', bookId),
     getInstitutions: unused,
     getInstitution: unused,
@@ -312,6 +313,7 @@ describe('ItemDetailScreen endpoint choice', () => {
         return aBook();
       },
       getPublicFeed: unused,
+      getPublicJournals: unused,
       getPublicPublication: async () => {
         calls.push('public');
         return aBook();
@@ -552,6 +554,7 @@ describe('ItemDetailScreen with a book', () => {
         expect(mockNavigate).toHaveBeenCalledWith('AudioPlayer', {
           bookId: 'item_42',
           title: 'Rights for Robots',
+          coverUrl: 'https://cdn.tf/covers/item_42.jpg',
         }),
       );
       expect(mockNavigate).not.toHaveBeenCalledWith('Reader', expect.anything());

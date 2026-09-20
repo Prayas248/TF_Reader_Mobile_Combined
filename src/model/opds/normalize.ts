@@ -17,6 +17,7 @@ import type {
   CatalogueEncryption,
   NavLink,
   Publication,
+  PublicJournal,
   SearchFeed,
   Shelf,
   WorkFeed,
@@ -462,6 +463,25 @@ export function normalizeCatalogue(doc: unknown): Catalogue {
       ? { searchHref: reqString(search.href, 'search href') }
       : {}),
   };
+}
+
+// A journal, on the anonymous browse screen this feeds — GET /opds/v1/public/journals. Every
+// entry is the SAME container-publication shape toJournalCover already reads for the Journals
+// group above (no self link, no acquisition link — normalizePublication cannot parse these),
+// this just adds the title normalizePublicJournals's own caller actually needs to render one.
+function toPublicJournal(doc: unknown): PublicJournal {
+  const { workId, coverUrl } = toJournalCover(doc);
+  const publication = asRecord(doc, 'journal publication');
+  const metadata = asRecord(publication.metadata, 'journal publication metadata');
+  const title = reqString(metadata.title, 'journal publication title');
+  return coverUrl === undefined ? { workId, title } : { workId, title, coverUrl };
+}
+
+export function normalizePublicJournals(doc: unknown): PublicJournal[] {
+  const feed = asRecord(doc, 'public journals feed');
+  const publications =
+    feed.publications === undefined ? [] : asArray(feed.publications, 'public journals publications');
+  return publications.map(toPublicJournal);
 }
 
 // The two keys a zero-result search may offer browse targets under.

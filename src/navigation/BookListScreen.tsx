@@ -43,7 +43,7 @@ import type { BookId, ContentFormat } from '@/shared/contracts';
 // than a live navigator's param list.
 type BookListRouteParamList = {
   BookList: undefined;
-  Reader: { bookId: BookId; format: ContentFormat };
+  Reader: { bookId: BookId; format: ContentFormat; title?: string };
   AudioPlayer: { bookId: BookId; title: string };
   MockLibrary: undefined;
 };
@@ -316,10 +316,10 @@ export function BookListScreen({ navigation }: Props): React.JSX.Element {
     }
   };
 
-  const handleOpen = async (bookId: BookId, format: ContentFormat) => {
+  const handleOpen = async (bookId: BookId, format: ContentFormat, title?: string) => {
     try {
       await openBook(bookId, format);
-      navigation.navigate('Reader', { bookId, format });
+      navigation.navigate('Reader', { bookId, format, title });
     } catch (error) {
       const message = formatDiagnosticErrorMessage(error);
       Alert.alert('Cannot open book', message);
@@ -422,7 +422,7 @@ export function BookListScreen({ navigation }: Props): React.JSX.Element {
                 key={`${fixture.bookId}-${clearedGeneration}`}
                 fixture={fixture}
                 onPress={() => {
-                  void handleOpen(fixture.bookId, fixture.format);
+                  void handleOpen(fixture.bookId, fixture.format, fixture.label);
                 }}
               />
             ))}

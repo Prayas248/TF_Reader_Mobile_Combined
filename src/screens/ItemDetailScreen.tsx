@@ -112,7 +112,10 @@ interface ItemDetailRouteProps {
   // entirely — the title tracks navigation history, not content.
   navigation: {
     navigate(screen: 'AccessGate', params: { itemId: string; title: string; authors: string }): void;
-    navigate(screen: 'Reader', params: { bookId: BookId; format: ContentFormat }): void;
+    navigate(
+      screen: 'Reader',
+      params: { bookId: BookId; format: ContentFormat; title?: string },
+    ): void;
     // AUDIO's own destination — see `handleAction`'s 'read'/'play' branch for
     // why this is a second overload rather than folding into 'Reader' above.
     navigate(screen: 'AudioPlayer', params: { bookId: BookId; title: string; coverUrl?: string }): void;
@@ -983,7 +986,7 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
             if (format === 'AUDIO') {
               navigation.navigate('AudioPlayer', { bookId: itemId as BookId, title: detail.title, coverUrl: detail.coverUrl });
             } else {
-              navigation.navigate('Reader', { bookId: itemId as BookId, format });
+              navigation.navigate('Reader', { bookId: itemId as BookId, format, title: detail.title });
             }
           })
           .catch((err: unknown) => {

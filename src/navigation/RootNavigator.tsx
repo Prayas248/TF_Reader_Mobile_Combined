@@ -315,15 +315,16 @@ function CatalogueNavigator() {
         component={PersonalAccountScreen}
         options={({ route }) => ({ title: personalAccountTitle(route.params.mode) })}
       />
-      {/* Reader engine integration seam — the screen sets its own header title via
-          navigation.setOptions (depends on the route's `format` param, not known here), so this
-          keeps the stack's own AppHeader rather than hiding it. `gestureEnabled: false` per
-          integration_ref.md: native-stack's default edge-swipe-back can conflict with the WebView's
-          own internal gesture recognizer — see ReaderRouteScreen.tsx's own note. */}
+      {/* Reader engine integration seam — `headerShown: false`, same reasoning as `AudioPlayer`
+          below: ReaderScreen draws its own header bar (back chevron + title) now, so the reader can
+          use the full screen edge-to-edge instead of sharing it with native-stack's own AppHeader.
+          `gestureEnabled: false` per integration_ref.md: native-stack's default edge-swipe-back can
+          conflict with the WebView's own internal gesture recognizer — see ReaderRouteScreen.tsx's
+          own note. */}
       <CatalogueStack.Screen
         name="Reader"
         component={ReaderRouteScreen}
-        options={{ gestureEnabled: false }}
+        options={{ gestureEnabled: false, headerShown: false }}
       />
       {/* headerShown: false + presentation: 'modal': this screen adds its own close control
           rather than relying on native-stack's default header back button. */}
@@ -335,15 +336,14 @@ function CatalogueNavigator() {
       {/* AUDIO's own destination — see ItemDetailScreen's 'read'/'play' branch
           and AudioPlayerRouteScreen.tsx's own header for why this is a
           separate route from 'Reader' rather than a format branch inside it.
-          Title comes from the route param (the book's own title), the same
-          pattern `Shelf`/`PersonalAccount` already use for a per-push title
-          the stack registration cannot know ahead of time. No gesture/WebView
-          conflict here (a native player, not a WebView), so this keeps
-          native-stack's default swipe-back unlike 'Reader'. */}
+          `headerShown: false`: AudioPlayerScreen draws its own header bar (back chevron, title,
+          cover art) so the player can use the full screen, same reasoning as 'Reader' above. No
+          gesture/WebView conflict here (a native player, not a WebView), so this keeps native-
+          stack's default swipe-back unlike 'Reader'. */}
       <CatalogueStack.Screen
         name="AudioPlayer"
         component={AudioPlayerRouteScreen}
-        options={({ route }) => ({ title: route.params.title })}
+        options={{ headerShown: false }}
       />
     </CatalogueStack.Navigator>
   );
@@ -388,7 +388,7 @@ function SearchNavigator() {
       <SearchStack.Screen
         name="Reader"
         component={ReaderRouteScreen}
-        options={{ gestureEnabled: false }}
+        options={{ gestureEnabled: false, headerShown: false }}
       />
       <SearchStack.Screen
         name="BookInfo"
@@ -399,7 +399,7 @@ function SearchNavigator() {
       <SearchStack.Screen
         name="AudioPlayer"
         component={AudioPlayerRouteScreen}
-        options={({ route }) => ({ title: route.params.title })}
+        options={{ headerShown: false }}
       />
     </SearchStack.Navigator>
   );
@@ -456,7 +456,7 @@ function LibraryNavigator() {
       <LibraryStack.Screen
         name="Reader"
         component={ReaderRouteScreen}
-        options={{ gestureEnabled: false }}
+        options={{ gestureEnabled: false, headerShown: false }}
       />
       <LibraryStack.Screen
         name="BookInfo"
@@ -467,7 +467,7 @@ function LibraryNavigator() {
       <LibraryStack.Screen
         name="AudioPlayer"
         component={AudioPlayerRouteScreen}
-        options={({ route }) => ({ title: route.params.title })}
+        options={{ headerShown: false }}
       />
     </LibraryStack.Navigator>
   );

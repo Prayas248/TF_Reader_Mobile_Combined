@@ -138,6 +138,7 @@ function fakeSource(
     getShelf,
     getPublication: unused,
     getPublicFeed: unused,
+    getPublicJournals: unused,
     getPublicPublication: unused,
     getInstitutions: unused,
     getInstitution: unused,

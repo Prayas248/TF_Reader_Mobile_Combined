@@ -10,7 +10,15 @@
 // point: if the normalizer mishandles wokay's OPDS, this adapter surfaces it
 // today instead of the day the backend lands.
 import type { BookId } from '@/shared/types/primitives';
-import type { BatchItemsResult, Catalogue, Publication, Shelf, SortOrder, WorkFeed } from '@model/types';
+import type {
+  BatchItemsResult,
+  Catalogue,
+  Publication,
+  PublicJournal,
+  Shelf,
+  SortOrder,
+  WorkFeed,
+} from '@model/types';
 import type { DataSource, InstitutionQueryParams } from '@adapters/InstitutionSource';
 import type { ShelfQuery } from '@adapters/CatalogueSource';
 import { CatalogueError, CatalogueFailure } from '@model/errors';
@@ -203,6 +211,14 @@ export class MockAdapter implements DataSource {
 
     feed.publications.forEach(assertPublication);
     return feed;
+  }
+
+  // No journal fixture exists for the SIGNED-IN home catalogue either
+  // (homeCatalogueFixture carries no "Journals" group) — this stays empty
+  // rather than modelling journals here first and leaving that screen behind.
+  async getPublicJournals(): Promise<PublicJournal[]> {
+    await this.simulate('public journals');
+    return [];
   }
 
   async getPublicPublication(bookId: BookId): Promise<Publication> {

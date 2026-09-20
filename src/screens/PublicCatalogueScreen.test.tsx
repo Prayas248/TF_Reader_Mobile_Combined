@@ -14,7 +14,7 @@ import {
   forgetFeedOffsets,
   rememberedFeedOffset,
 } from '@hooks/useFeedScrollMemory';
-import type { Publication, Shelf } from '@model/types';
+import type { Publication, PublicJournal, Shelf } from '@model/types';
 
 import PublicCatalogueScreen from './PublicCatalogueScreen';
 
@@ -66,12 +66,18 @@ const SECOND_PAGE: Shelf = {
 };
 
 // Every method a real DataSource must have, so the fake typechecks as one. Only
-// `getPublicFeed` is exercised — the rest reject, so a screen that reached for
-// one would fail loudly rather than quietly work off the wrong endpoint.
-function fakeSource(getPublicFeed: DataSource['getPublicFeed']): DataSource {
+// `getPublicFeed` (and, when supplied, `getPublicJournals`) is exercised — the
+// rest reject, so a screen that reached for one would fail loudly rather than
+// quietly work off the wrong endpoint. `journals` defaults to `[]` so every
+// existing test (which does not care about the Journals section) is unaffected.
+function fakeSource(
+  getPublicFeed: DataSource['getPublicFeed'],
+  journals: PublicJournal[] = [],
+): DataSource {
   const unused = () => Promise.reject(new Error('not stubbed for this test'));
   return {
     getPublicFeed,
+    getPublicJournals: () => Promise.resolve(journals),
     getHomeCatalogue: unused,
     getShelf: unused,
     getPublication: unused,
@@ -136,7 +142,7 @@ describe('PublicCatalogueScreen with data', () => {
       expect(screen.getByText('Coastal Wetlands of the Bay of Bengal')).toBeTruthy(),
     );
     expect(screen.queryAllByTestId('category-card-title')).toHaveLength(0);
-    expect(screen.getByText('Open Access Titles')).toBeTruthy();
+    expect(screen.getByText('All titles')).toBeTruthy();
   });
 
   it('navigates to ItemDetail with the publication id when a row is pressed', async () => {
@@ -485,5 +491,58 @@ describe('PublicCatalogueScreen — D12 exclusion', () => {
     expect(screen.queryByTestId('queue-action-position')).toBeNull();
     expect(screen.queryByTestId('queue-action-offer')).toBeNull();
     expect(screen.queryByTestId('content-card-action')).toBeNull();
+  });
+});
+
+// The anonymous counterpart to CatalogueScreen.test.tsx's own Journals
+// section — same components, same "hidden entirely once empty" shape, but
+// sourced from getPublicJournals() (no institution) rather than the home
+// catalogue's navigation entries.
+describe('PublicCatalogueScreen journals', () => {
+  it('renders a Journals section above All titles when journals exist', async () => {
+    setCatalogueSource(
+      fakeSource(async () => FIRST_PAGE, [
+        { workId: 'journal_1', title: 'Journal Of Open Science', coverUrl: 'https://cdn.tf/journal_1.jpg' },
+      ]),
+    );
+
+    await render(<PublicCatalogueScreen />);
+
+    await waitFor(() => expect(screen.getByText('Journal Of Open Science')).toBeTruthy());
+    expect(screen.getByText('Journals')).toBeTruthy();
+    expect(screen.getByText('All titles')).toBeTruthy();
+  });
+
+  it('renders no Journals heading at all when there are none', async () => {
+    setCatalogueSource(fakeSource(async () => FIRST_PAGE, []));
+
+    await render(<PublicCatalogueScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByText('Coastal Wetlands of the Bay of Bengal')).toBeTruthy(),
+    );
+    expect(screen.queryByText('Journals')).toBeNull();
+  });
+
+  // Browsing a journal's own volumes/issues needs an institution
+  // (getWork(institutionId, workId)), which this screen does not have — see
+  // the file header's "TAPPING A JOURNAL GOES TO SIGN-IN" note.
+  it('sends a signed-out reader to AccessGate when a journal is pressed', async () => {
+    setCatalogueSource(
+      fakeSource(async () => FIRST_PAGE, [
+        { workId: 'journal_1', title: 'Journal Of Open Science' },
+      ]),
+    );
+
+    await render(<PublicCatalogueScreen />);
+
+    await waitFor(() => expect(screen.getByText('Journal Of Open Science')).toBeTruthy());
+    fireEvent.press(screen.getByRole('button', { name: 'Journal Of Open Science' }));
+
+    expect(mockNavigate).toHaveBeenCalledWith('AccessGate', {
+      itemId: 'journal_1',
+      title: 'Journal Of Open Science',
+      authors: '',
+    });
   });
 });

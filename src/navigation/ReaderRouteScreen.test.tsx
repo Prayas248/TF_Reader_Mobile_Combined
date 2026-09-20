@@ -135,12 +135,15 @@ jest.mock('../../DevPreferencesMenu', () => ({
 }));
 
 const mockGoBack = jest.fn();
+// Mirrors ItemDetailScreen.test.tsx's own `mockGetParent` — ReaderRouteScreen now hides the shared
+// tab bar the same way that screen does (see its own `getParent()?.setOptions` effect).
+const mockGetParent = jest.fn(() => ({ setOptions: jest.fn() }));
 
 // `render` is ASYNC in @testing-library/react-native v14 — see App.test.tsx's own note.
 function renderReaderRoute(bookId: string, initialTarget?: unknown) {
   return render(
     <ReaderRouteScreen
-      navigation={{ setOptions: jest.fn(), goBack: mockGoBack } as never}
+      navigation={{ setOptions: jest.fn(), goBack: mockGoBack, getParent: mockGetParent } as never}
       route={
         { key: 'Reader', name: 'Reader', params: { bookId, format: 'EPUB', initialTarget } } as never
       }
@@ -179,6 +182,7 @@ describe('ReaderRouteScreen', () => {
     mockPullBook.mockReset();
     mockPauseTtsIfSpeaking.mockReset();
     mockGoBack.mockReset();
+    mockGetParent.mockClear();
     mockCurrentLocator.mockResolvedValue(null);
     mockSyncRun.mockResolvedValue(undefined);
     mockCurrentForBook.mockResolvedValue(null);
@@ -191,7 +195,7 @@ describe('ReaderRouteScreen', () => {
       const mockNavigate = jest.fn();
       const { getByText } = await render(
         <ReaderRouteScreen
-          navigation={{ setOptions: jest.fn(), navigate: mockNavigate } as never}
+          navigation={{ setOptions: jest.fn(), navigate: mockNavigate, getParent: mockGetParent } as never}
           route={
             {
               key: 'Reader',

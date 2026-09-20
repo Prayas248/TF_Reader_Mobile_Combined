@@ -511,7 +511,7 @@ describe('AudioPlayerScreen', () => {
     await waitFor(() =>
       expect(fakePlayer.setActiveForLockScreen).toHaveBeenCalledWith(
         true,
-        { title: 'My Audiobook', artist: 'TF Reader' },
+        { title: 'My Audiobook', artist: 'Nexus' },
         { showSeekForward: true, showSeekBackward: true },
       ),
     );

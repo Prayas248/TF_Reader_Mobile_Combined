@@ -44,6 +44,7 @@ import {
 
 import { useAudioPlayerStatus } from 'expo-audio';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 import Loader from '@components/Loader';
@@ -103,6 +104,15 @@ export interface AudioPlayerScreenProps {
   /** The book's cover image, for the hero art. Absent shows a plain placeholder — same
    * "missing cover is not an error" treatment ItemDetailScreen/JournalScreen give a cover. */
   coverUrl?: string;
+  /**
+   * Presence renders a back chevron at the left of the top bar and wires it to this callback;
+   * absence renders no back control at all. Navigation-agnostic on the same grounds as
+   * `onBeforePlay` — this file has no `navigation` prop of its own. `AudioPlayerRouteScreen.tsx`
+   * supplies `navigation.goBack`. Matches `ReaderScreen`'s identical `onBack` prop and reasoning:
+   * the native-stack header is hidden for this route (RootNavigator.tsx) so the player can use the
+   * full screen, and this screen draws its own back control instead.
+   */
+  onBack?: () => void;
   /** Seconds into the track to resume at, or undefined for "start from the top." Read once on
    * mount — see AudioPlayerRouteScreen.tsx for where this comes from. */
   initialPosition?: number;
@@ -184,9 +194,23 @@ function Scrubber({
 }
 
 function AudioPlayerScreenComponent(
-  { bookId, title, coverUrl, initialPosition, onPositionChange, onPositionCommit, onBeforePlay }: AudioPlayerScreenProps,
+  {
+    bookId,
+    title,
+    coverUrl,
+    onBack,
+    initialPosition,
+    onPositionChange,
+    onPositionCommit,
+    onBeforePlay,
+  }: AudioPlayerScreenProps,
   ref: React.ForwardedRef<AudioPlayerScreenHandle>,
 ): React.JSX.Element {
+  // The native-stack header is hidden for this route (RootNavigator.tsx) so the player can use the
+  // full screen — this screen's own top bar below has to account for the top safe area itself, the
+  // same way AppHeader always did on its behalf. Matches ReaderScreen's identical reasoning.
+  const insets = useSafeAreaInsets();
+
   const [uri, setUri] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const hasResumedRef = useRef(false);
@@ -325,7 +349,7 @@ function AudioPlayerScreenComponent(
     if (status.playing) {
       player.setActiveForLockScreen(
         true,
-        { title, artist: 'TF Reader' },
+        { title, artist: 'Nexus' },
         { showSeekForward: true, showSeekBackward: true },
       );
     }
@@ -483,21 +507,39 @@ function AudioPlayerScreenComponent(
     );
   }
 
-  const playAccessibilityLabel = status.playing
-    ? 'Pause'
-    : playCheckPending
-      ? 'Checking progress'
-      : 'Play';
+  let playAccessibilityLabel: string;
+  if (status.playing) {
+    playAccessibilityLabel = 'Pause';
+  } else if (playCheckPending) {
+    playAccessibilityLabel = 'Checking progress';
+  } else {
+    playAccessibilityLabel = 'Play';
+  }
   const prevDisabled = !hasPrevious && status.currentTime <= 3.0;
 
   return (
     <View style={styles.container}>
-      {/* Top row — secondary actions only, icon-first (Spotify's own "now playing" bar shape).
-          Track title moves below the cover art instead of living up here. */}
-      <View style={styles.topBar}>
-        <Text style={styles.eyebrow} numberOfLines={1}>
-          NOW PLAYING
-        </Text>
+      {/* Top row — back + a secondary label on the left, icon-first actions on the right (Spotify's
+          own "now playing" bar shape). Track title moves below the cover art instead of living up
+          here. `paddingTop` is applied inline since a static StyleSheet value can't see the safe
+          area — mirrors ReaderScreen's own header bar, so the two reading surfaces read as one
+          consistent product. */}
+      <View style={[styles.topBar, { paddingTop: insets.top + space.xs }]}>
+        <View style={styles.topBarLeft}>
+          {onBack && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              onPress={onBack}
+              style={styles.iconButton}
+            >
+              <Ionicons name="chevron-back" size={24} color={color.white} />
+            </Pressable>
+          )}
+          <Text style={styles.eyebrow} numberOfLines={1}>
+            NOW PLAYING
+          </Text>
+        </View>
         <View style={styles.topBarActions}>
           <Pressable
             accessibilityRole="button"
@@ -678,34 +720,79 @@ function AudioPlayerScreenComponent(
 export const AudioPlayerScreen = forwardRef(AudioPlayerScreenComponent);
 AudioPlayerScreen.displayName = 'AudioPlayerScreen';
 
+const ART_SIZE = 280;
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: color.white, padding: 20, gap: space.lg },
+  // Error/lock/loading states stay on the ordinary light surface — they're terminal states
+  // distinct from "now playing", same treatment ReaderScreen gives its own error views.
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 20 },
+  loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.white },
   errorTitle: { fontSize: 17, fontWeight: '700', color: color.error, textAlign: 'center' },
   errorDetail: { fontSize: 14, color: color.textSecondary, textAlign: 'center' },
-  headerRow: {
+
+  // The "now playing" surface itself — dark navy, same identity TopAppBar/BootSplash already
+  // give the rest of the app's chrome, so this reads as a deliberate destination, not a stray
+  // light-themed screen wedged behind a dark tab bar.
+  container: {
+    flex: 1,
+    backgroundColor: color.navy,
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    gap: space.lg,
+  },
+  // `paddingTop` is applied inline (insets.top + space.xs) — see this View's own JSX comment.
+  topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 12,
-    gap: space.sm,
   },
-  title: { fontSize: 20, fontWeight: '700', color: color.textPrimary, flex: 1, marginRight: 12 },
-  queueButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radius.sheet,
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.border,
-  },
-  queueButtonLabel: {
-    fontSize: 13,
+  topBarLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  eyebrow: {
+    fontSize: 12,
     fontWeight: '700',
-    color: color.textSecondary,
+    letterSpacing: 1.5,
+    color: 'rgba(255, 255, 255, 0.6)',
   },
+  topBarActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  iconButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  iconButtonBadge: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+
+  coverWrap: { alignItems: 'center', marginTop: space.sm },
+  cover: {
+    width: ART_SIZE,
+    height: ART_SIZE,
+    borderRadius: radius.card,
+  },
+  coverPlaceholder: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  title: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: color.white,
+    textAlign: 'center',
+  },
+
   scrubberRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  timeLabel: { fontSize: 12, color: color.textSecondary, width: 40, textAlign: 'center' },
+  timeLabel: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.6)',
+    width: 40,
+    textAlign: 'center',
+  },
   scrubberTrack: {
     flex: 1,
     height: 28,
@@ -717,7 +804,7 @@ const styles = StyleSheet.create({
     right: 0,
     height: 4,
     borderRadius: 2,
-    backgroundColor: color.border,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   // The accent, not body text — `color.primary` (Ultramarine), same token MiniAudioPlayer's own
   // progress fill and play button use, so the mini and full players read as one brand-blue accent.
@@ -726,46 +813,46 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: color.primary,
   },
+
   transportRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 16,
+    gap: 20,
   },
-  transportButton: {
-    paddingHorizontal: space.md,
-    paddingVertical: 12,
-    borderRadius: 24,
-    backgroundColor: color.surface,
-  },
-  transportButtonLabel: { fontSize: 15, fontWeight: '700', color: color.textPrimary },
   trackNavButton: {
-    paddingHorizontal: 12,
+    padding: 10,
   },
-  trackNavIcon: {
-    fontSize: 12,
-    fontWeight: '700',
+  skipButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 44,
+    height: 44,
   },
-  transportButtonDisabled: {
-    opacity: 0.35,
+  skipButtonGlyph: { fontSize: 18, color: color.white, lineHeight: 20 },
+  skipButtonLabel: { fontSize: 10, fontWeight: '700', color: 'rgba(255, 255, 255, 0.75)' },
+  playButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: color.white,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  transportButtonLabelDisabled: {
-    color: color.textSecondary,
-  },
-  playButton: { backgroundColor: color.primary, minWidth: 96, alignItems: 'center' },
-  // Distinct from transportButtonDisabled's opacity dip: this button isn't disabled-looking,
-  // it's mid-action — a grey fill reads as "pressed and working" rather than "unavailable".
-  playButtonPending: { backgroundColor: color.textSecondary },
-  playButtonLabel: { fontSize: 15, fontWeight: '700', color: color.white },
-  rateRow: { flexDirection: 'row', justifyContent: 'center', gap: space.sm },
+  // Distinct from a disabled look: this button isn't unavailable, it's mid-action — a dimmer
+  // fill reads as "pressed and working" rather than "you can't do this".
+  playButtonPending: { backgroundColor: 'rgba(255, 255, 255, 0.5)' },
+  playGlyphNudge: { marginLeft: 3 },
+
+  bottomRow: { flexDirection: 'row', justifyContent: 'center', gap: space.sm },
   rateButton: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: color.border,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   rateButtonActive: { backgroundColor: color.primary, borderColor: color.primary },
-  rateButtonLabel: { fontSize: 13, fontWeight: '700', color: color.textPrimary },
+  rateButtonLabel: { fontSize: 13, fontWeight: '700', color: 'rgba(255, 255, 255, 0.75)' },
   rateButtonLabelActive: { color: color.white },
 });

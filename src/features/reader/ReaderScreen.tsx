@@ -28,9 +28,10 @@ import {
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Spinner from '@components/Spinner';
-import { color, radius, space } from '@theme/tokens';
+import { color, radius, space, type } from '@theme/tokens';
 
 import { AccessibilityInfoButton } from '@/features/accessibility/AccessibilityInfoButton';
 import { AccessibilitySettingsPanel } from '@/features/accessibility/AccessibilitySettingsPanel';
@@ -409,6 +410,24 @@ interface ReaderScreenProps {
   bookId: BookId;
 
   /**
+   * The book's own title, shown in this screen's own header bar. Optional and falls back to
+   * rendering nothing rather than a placeholder — same "missing display data is not an error"
+   * treatment other screens give an absent title/cover.
+   */
+  title?: string;
+
+  /**
+   * Presence renders a back chevron at the left of this screen's own header bar and wires it to
+   * this callback; absence renders no back control at all. Navigation-agnostic on the same grounds
+   * as `onOpenAccessibilityInfo` below — this file has no `navigation` prop of its own.
+   * `ReaderRouteScreen.tsx` supplies `navigation.goBack`. This screen draws its OWN header
+   * (matching AudioPlayerScreen's identical shape) rather than relying on native-stack's, because
+   * the native header is hidden for this route (see RootNavigator.tsx) so the reader can use the
+   * full screen.
+   */
+  onBack?: () => void;
+
+  /**
    * Where to `goTo` once, right after this open's first `rendered` — the resume half of reading
    * progress. Read ONCE, at mount: this component is already keyed on `bookId` (see above), so a
    * genuinely new target means a remount, not a prop change on a live instance. Omit it and the
@@ -473,6 +492,8 @@ interface ReaderScreenProps {
 function ReaderScreenComponent(
   {
     bookId,
+    title,
+    onBack,
     initialTarget,
     onRelocated,
     onLocked,
@@ -481,6 +502,11 @@ function ReaderScreenComponent(
   }: ReaderScreenProps,
   ref: React.ForwardedRef<ReaderScreenHandle>,
 ): React.JSX.Element {
+  // The native-stack header is hidden for this route (RootNavigator.tsx) so the reader can use the
+  // full screen — this screen's own header bar below has to account for the top safe area itself,
+  // the same way AppHeader always did on its behalf.
+  const insets = useSafeAreaInsets();
+
   /**
    * The book's format and its matching shell — TAGGED WITH THE bookId THEY BELONG TO,
    * and set as ONE value so they can never disagree.
@@ -2418,114 +2444,143 @@ function ReaderScreenComponent(
       {/* THE BACKGROUND, for `anyPanelOpen`'s purposes — this row, the book, the two on-page
           badges and the bottom row. Each carries the pair separately because a panel is a sibling
           of the book inside `viewer`; there is no single node that holds all of this and none of
-          the panels. See `anyPanelOpen`'s own note. */}
+          the panels. See `anyPanelOpen`'s own note.
+
+          Dark navy, full-width, own safe-area padding: this replaces native-stack's AppHeader
+          (hidden for this route — RootNavigator.tsx) now that the reader owns the whole screen, and
+          deliberately matches AudioPlayerScreen's own header treatment (same `color.navy`
+          background, same back-chevron-left/actions-right shape) so the two reading surfaces this
+          app has read as one consistent product rather than two differently-themed screens. */}
       <View
-        style={styles.toolbar}
+        style={[styles.toolbar, { paddingTop: insets.top + space.xs }]}
         accessibilityElementsHidden={anyPanelOpen}
         importantForAccessibility={anyPanelOpen ? 'no-hide-descendants' : 'yes'}
       >
-        <Pressable
-          accessibilityRole="button"
-          // Required rather than stylistic: a glyph child gives a screen reader nothing to say,
-          // and every existing test finds buttons by accessible name.
-          accessibilityLabel="Search this title"
-          accessibilityState={{ expanded: showSearch }}
-          ref={searchButtonRef}
-          onPress={() => {
-            // Mutual exclusion with Contents, Bookmarks (and TTS). A UI decision — one panel's
-            // worth of the viewer is all there is room for. It no longer also carries the job of
-            // keeping "Close" unambiguous: each panel now names its own ("Close search",
-            // "Close bookmarks", "Close contents"), so the exclusion is free to change on its
-            // own merits without renaming a control out from under the test suite.
-            closeToc(false); // this panel is taking over — see closeToc's own note.
-            setShowBookmarks(false);
-            setShowAccessibility(false);
-            setShowSearch((open) => !open);
-          }}
-          style={styles.toolbarButton}
-        >
-          <Ionicons name="search-outline" style={styles.toolbarIcon} />
-        </Pressable>
+        <View style={styles.toolbarLeft}>
+          {onBack && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              onPress={onBack}
+              style={styles.toolbarButton}
+            >
+              <Ionicons name="chevron-back" size={24} color={color.white} />
+            </Pressable>
+          )}
+          {title !== undefined && (
+            <Text style={styles.toolbarTitle} numberOfLines={1} ellipsizeMode="tail">
+              {title}
+            </Text>
+          )}
+        </View>
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Bookmarks"
-          accessibilityState={{ expanded: showBookmarks }}
-          onPress={() => {
-            closeToc(false);
-            setShowSearch(false);
-            setShowAccessibility(false);
-            setShowBookmarks((open) => !open);
-          }}
-          style={styles.toolbarButton}
-        >
-          <Ionicons
-            name={isCurrentPositionBookmarked ? 'bookmark' : 'bookmark-outline'}
-            style={[styles.toolbarIcon, isCurrentPositionBookmarked && styles.toolbarIconBookmarked]}
-          />
-        </Pressable>
+        <View style={styles.toolbarActions}>
+          <Pressable
+            accessibilityRole="button"
+            // Required rather than stylistic: a glyph child gives a screen reader nothing to say,
+            // and every existing test finds buttons by accessible name.
+            accessibilityLabel="Search this title"
+            accessibilityState={{ expanded: showSearch }}
+            ref={searchButtonRef}
+            onPress={() => {
+              // Mutual exclusion with Contents, Bookmarks (and TTS). A UI decision — one panel's
+              // worth of the viewer is all there is room for. It no longer also carries the job of
+              // keeping "Close" unambiguous: each panel now names its own ("Close search",
+              // "Close bookmarks", "Close contents"), so the exclusion is free to change on its
+              // own merits without renaming a control out from under the test suite.
+              closeToc(false); // this panel is taking over — see closeToc's own note.
+              setShowBookmarks(false);
+              setShowAccessibility(false);
+              setShowSearch((open) => !open);
+            }}
+            style={styles.toolbarButton}
+          >
+            <Ionicons name="search-outline" style={styles.toolbarIcon} />
+          </Pressable>
 
-        {/* NOT GATED ON `format`, unlike the panel's own Dyslexia Font row: High Contrast and
-            Reduce Motion apply to every format, and to the shell before a book has even resolved.
-            Gating the whole entry point on the one control that is EPUB-only would take the other
-            two away from PDF and audio readers. */}
-        <Pressable
-          accessibilityRole="button"
-          // Explicit for the same reason as Search and Bookmarks: the glyph gives a screen reader
-          // nothing to say, and every test finds these buttons by accessible name. One merged
-          // entry point now — this button opens both the settings toggles below AND, via a row
-          // inside that same dropdown, the accessibility-information screen — so the label speaks
-          // to the whole panel rather than just the toggles.
-          accessibilityLabel="Accessibility"
-          accessibilityState={{ expanded: showAccessibility }}
-          ref={accessibilityButtonRef}
-          onPress={() => {
-            closeToc(false); // this panel is taking over — see closeToc's own note.
-            setShowSearch(false);
-            setShowBookmarks(false);
-            setShowAccessibility((open) => {
-              const next = !open;
-              if (next) {
-                // Same measure-on-open shape as DevPreferencesMenu.tsx's `toggleOpen` — see
-                // `accessibilityAnchor`'s own doc for why this has to be measured rather than laid
-                // out relatively, now that the dropdown renders inside a `Modal`. A one-shot read
-                // here, not the reactive `windowWidth` above — an anchor position is a snapshot at
-                // the moment the dropdown opens, unlike the ScrollView's height cap, which
-                // deliberately DOES stay live across a rotation while it's already open. Named
-                // `openWindowWidth` rather than `windowWidth` only to avoid shadowing that outer,
-                // reactive one — same value shape, different lifetime.
-                accessibilityButtonRef.current?.measureInWindow((x, y, width, height) => {
-                  const openWindowWidth = Dimensions.get('window').width;
-                  const right = Math.max(0, openWindowWidth - (x + width));
-                  const rightBasedMaxWidth = Math.max(
-                    0,
-                    openWindowWidth - right - ACCESSIBILITY_DROPDOWN_EDGE_MARGIN,
-                  );
-                  // Phone-only ceiling, layered ON TOP of the existing formula rather than
-                  // replacing it — above the compact-width threshold (tablet), `rightBasedMaxWidth`
-                  // is unchanged from before, and is already effectively capped further by
-                  // AccessibilitySettingsPanel's own `container.maxWidth: 560`. Below it,
-                  // `rightBasedMaxWidth` alone is "almost the full screen width minus the button's
-                  // own offset" — nearly edge-to-edge on a phone — so this caps it at 60% of the
-                  // window's width instead, leaving a clearly visible strip of the reader beside it.
-                  const maxWidth =
-                    openWindowWidth < ACCESSIBILITY_DROPDOWN_COMPACT_MAX_WIDTH
-                      ? Math.min(rightBasedMaxWidth, openWindowWidth * 0.6)
-                      : rightBasedMaxWidth;
-                  setAccessibilityAnchor({ top: y + height, right, maxWidth });
-                });
-              }
-              return next;
-            });
-          }}
-          style={styles.toolbarButton}
-        >
-          <Ionicons name="accessibility-outline" style={styles.toolbarIcon} />
-        </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Bookmarks"
+            accessibilityState={{ expanded: showBookmarks }}
+            onPress={() => {
+              closeToc(false);
+              setShowSearch(false);
+              setShowAccessibility(false);
+              setShowBookmarks((open) => !open);
+            }}
+            style={styles.toolbarButton}
+          >
+            <Ionicons
+              name={isCurrentPositionBookmarked ? 'bookmark' : 'bookmark-outline'}
+              style={[
+                styles.toolbarIcon,
+                isCurrentPositionBookmarked && styles.toolbarIconBookmarked,
+              ]}
+            />
+          </Pressable>
 
-        {/* LAST child, deliberately — see `toolbarExtra`'s own prop doc for why that makes this
-            the rightmost item in the row rather than a floating overlay on top of it. */}
-        {toolbarExtra}
+          {/* NOT GATED ON `format`, unlike the panel's own Dyslexia Font row: High Contrast and
+              Reduce Motion apply to every format, and to the shell before a book has even resolved.
+              Gating the whole entry point on the one control that is EPUB-only would take the other
+              two away from PDF and audio readers. */}
+          <Pressable
+            accessibilityRole="button"
+            // Explicit for the same reason as Search and Bookmarks: the glyph gives a screen reader
+            // nothing to say, and every test finds these buttons by accessible name. One merged
+            // entry point now — this button opens both the settings toggles below AND, via a row
+            // inside that same dropdown, the accessibility-information screen — so the label speaks
+            // to the whole panel rather than just the toggles.
+            accessibilityLabel="Accessibility"
+            accessibilityState={{ expanded: showAccessibility }}
+            ref={accessibilityButtonRef}
+            onPress={() => {
+              closeToc(false); // this panel is taking over — see closeToc's own note.
+              setShowSearch(false);
+              setShowBookmarks(false);
+              setShowAccessibility((open) => {
+                const next = !open;
+                if (next) {
+                  // Same measure-on-open shape as DevPreferencesMenu.tsx's `toggleOpen` — see
+                  // `accessibilityAnchor`'s own doc for why this has to be measured rather than laid
+                  // out relatively, now that the dropdown renders inside a `Modal`. A one-shot read
+                  // here, not the reactive `windowWidth` above — an anchor position is a snapshot at
+                  // the moment the dropdown opens, unlike the ScrollView's height cap, which
+                  // deliberately DOES stay live across a rotation while it's already open. Named
+                  // `openWindowWidth` rather than `windowWidth` only to avoid shadowing that outer,
+                  // reactive one — same value shape, different lifetime.
+                  accessibilityButtonRef.current?.measureInWindow((x, y, width, height) => {
+                    const openWindowWidth = Dimensions.get('window').width;
+                    const right = Math.max(0, openWindowWidth - (x + width));
+                    const rightBasedMaxWidth = Math.max(
+                      0,
+                      openWindowWidth - right - ACCESSIBILITY_DROPDOWN_EDGE_MARGIN,
+                    );
+                    // Phone-only ceiling, layered ON TOP of the existing formula rather than
+                    // replacing it — above the compact-width threshold (tablet), `rightBasedMaxWidth`
+                    // is unchanged from before, and is already effectively capped further by
+                    // AccessibilitySettingsPanel's own `container.maxWidth: 560`. Below it,
+                    // `rightBasedMaxWidth` alone is "almost the full screen width minus the button's
+                    // own offset" — nearly edge-to-edge on a phone — so this caps it at 60% of the
+                    // window's width instead, leaving a clearly visible strip of the reader beside it.
+                    const maxWidth =
+                      openWindowWidth < ACCESSIBILITY_DROPDOWN_COMPACT_MAX_WIDTH
+                        ? Math.min(rightBasedMaxWidth, openWindowWidth * 0.6)
+                        : rightBasedMaxWidth;
+                    setAccessibilityAnchor({ top: y + height, right, maxWidth });
+                  });
+                }
+                return next;
+              });
+            }}
+            style={styles.toolbarButton}
+          >
+            <Ionicons name="accessibility-outline" style={styles.toolbarIcon} />
+          </Pressable>
+
+          {/* LAST child, deliberately — see `toolbarExtra`'s own prop doc for why that makes this
+              the rightmost item in the row rather than a floating overlay on top of it. */}
+          {toolbarExtra}
+        </View>
       </View>
 
       <View testID="reader-viewer" style={styles.viewer}>
@@ -3001,7 +3056,7 @@ function ReaderScreenComponent(
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
           >
-            <Text style={styles.privacyCoverText}>TF Reader</Text>
+            <Text style={styles.privacyCoverText}>Nexus</Text>
           </View>
         )}
       </View>
@@ -3211,14 +3266,33 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: color.white },
   viewer: { flex: 1 },
 
-  // Right-aligned so the icon falls under the thumb rather than next to the native-stack header's
-  // own title/back button above it. 44pt is the minimum comfortable touch target.
+  // This screen's own header bar — dark navy, full-width, replacing native-stack's AppHeader (see
+  // this View's own JSX comment). `paddingTop` is applied inline (insets.top + space.xs) since a
+  // static StyleSheet value can't see the device's safe area. 44pt buttons are the minimum
+  // comfortable touch target.
   toolbar: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 12,
-    paddingVertical: space.xs,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: color.navy,
+    paddingHorizontal: 8,
+    paddingBottom: space.xs,
   },
+  toolbarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: space.sm,
+  },
+  toolbarTitle: {
+    fontFamily: type.sectionHeader.fontFamily,
+    fontSize: type.sectionHeader.size,
+    lineHeight: type.sectionHeader.lineHeight,
+    color: color.white,
+    flex: 1,
+    marginLeft: 4,
+  },
+  toolbarActions: { flexDirection: 'row', alignItems: 'center' },
   toolbarButton: {
     minWidth: 44,
     minHeight: 44,
@@ -3226,7 +3300,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radius.card,
   },
-  toolbarIcon: { fontSize: 20 },
+  toolbarIcon: { fontSize: 20, color: color.white },
   // Ultramarine (`color.primary`) — the same brand blue used for active tabs/links elsewhere, so a
   // bookmarked page reads as an active state rather than an arbitrary accent (CONVENTIONS §5).
   toolbarIconBookmarked: { color: color.primary },
