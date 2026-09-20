@@ -144,6 +144,7 @@ function fakeSource(
     getInstitution: unused,
     getItemsBatch: unused,
     getWork: unused,
+    getPublicWork: unused,
   };
 }
 

@@ -21,10 +21,15 @@ import type { NavLink, WorkType } from '@model/types';
  * can group an article under its journal and a reader can navigate back to
  * it. Both are already in hand at every call site that builds this object
  * (JournalScreen/JournalIssueScreen), so nothing here is a new fetch.
+ *
+ * `institutionId: null` is the signed-out drill-down (PublicCatalogueScreen ->
+ * Journal -> ... -> ItemDetail, no institution selected at all) — Library
+ * membership is sign-in territory, so ItemDetailScreen skips recording it
+ * rather than threading a null institutionId into `articleJournalStore`.
  */
 export interface ArticleContext {
   journalWorkId: string;
-  institutionId: string;
+  institutionId: string | null;
   journalTitle: string;
   volumeTitle?: string;
   issueTitle?: string;
@@ -92,7 +97,13 @@ export type CatalogueStackParamList = {
   // Journal hierarchy drill-down — Journal Details → Volumes & Issues → Issue
   // Articles → ItemDetail (screen 04). title/coverUrl are passed so the header
   // and cover render without a network call.
-  Journal: { workId: string; title: string; institutionId: string; coverUrl?: string };
+  //
+  // `institutionId: null` means a signed-out reader browsing from
+  // PublicCatalogueScreen's own Journals section — every screen in this
+  // drill-down calls `getPublicWork(workId)` instead of
+  // `getWork(institutionId, workId)` in that case (same branch shape
+  // ItemDetailScreen already uses for `getPublicPublication`).
+  Journal: { workId: string; title: string; institutionId: string | null; coverUrl?: string };
   // Volumes & Issues (screen 03). `volumes` is the journal's own already-
   // fetched `children` list — JournalScreen has just made this exact call, so
   // this screen makes no duplicate fetch of the same root work feed. No
@@ -101,7 +112,7 @@ export type CatalogueStackParamList = {
   JournalVolumes: {
     journalWorkId: string;
     journalTitle: string;
-    institutionId: string;
+    institutionId: string | null;
     volumes: NavLink[];
   };
   // Issue Articles (screen 04's list). `workId` is the ISSUE's own work id —
@@ -115,7 +126,7 @@ export type CatalogueStackParamList = {
   JournalIssue: {
     journalWorkId: string;
     journalTitle: string;
-    institutionId: string;
+    institutionId: string | null;
     volumeTitle?: string;
     issueTitle: string;
     workId: string;

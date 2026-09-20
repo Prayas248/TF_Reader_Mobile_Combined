@@ -386,6 +386,13 @@ export class ApiAdapter implements DataSource {
     return normalizeWorkFeed(body);
   }
 
+  // Same "no institution, no auth header" shape as getPublicFeed/getPublicJournals.
+  async getPublicWork(workId: string): Promise<WorkFeed> {
+    const url = `${this.baseUrl}/opds/v1/public/works/${encodeURIComponent(workId)}`;
+    const body = await this.getJson(url, workId);
+    return normalizeWorkFeed(body);
+  }
+
   // Ids are percent-encoded on the way into the path. Without this, an id
   // containing '../' or '?' would silently rewrite which endpoint gets called.
   //

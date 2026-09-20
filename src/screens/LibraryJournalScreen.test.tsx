@@ -45,6 +45,7 @@ function fakeSource(getItemsBatch: DataSource['getItemsBatch']): DataSource {
     getInstitution: unused,
     getItemsBatch,
     getWork: unused,
+    getPublicWork: unused,
   };
 }
 

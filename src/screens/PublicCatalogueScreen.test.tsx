@@ -86,6 +86,7 @@ function fakeSource(
     getInstitution: unused,
     getItemsBatch: unused,
     getWork: unused,
+    getPublicWork: unused,
   };
 }
 
@@ -524,13 +525,18 @@ describe('PublicCatalogueScreen journals', () => {
     expect(screen.queryByText('Journals')).toBeNull();
   });
 
-  // Browsing a journal's own volumes/issues needs an institution
-  // (getWork(institutionId, workId)), which this screen does not have — see
-  // the file header's "TAPPING A JOURNAL GOES TO SIGN-IN" note.
-  it('sends a signed-out reader to AccessGate when a journal is pressed', async () => {
+  // Same drill-down a signed-in reader gets (Journal -> Volumes & Issues ->
+  // Issue Articles -> Article Details) — see the file header's "TAPPING A
+  // JOURNAL GOES INTO IT" note. `institutionId: null` is what tells
+  // JournalScreen and its children to call getPublicWork instead of getWork.
+  it('navigates into the Journal screen, with no institution, when a journal is pressed', async () => {
     setCatalogueSource(
       fakeSource(async () => FIRST_PAGE, [
-        { workId: 'journal_1', title: 'Journal Of Open Science' },
+        {
+          workId: 'journal_1',
+          title: 'Journal Of Open Science',
+          coverUrl: 'https://cdn.tf/journal_1.jpg',
+        },
       ]),
     );
 
@@ -539,10 +545,11 @@ describe('PublicCatalogueScreen journals', () => {
     await waitFor(() => expect(screen.getByText('Journal Of Open Science')).toBeTruthy());
     fireEvent.press(screen.getByRole('button', { name: 'Journal Of Open Science' }));
 
-    expect(mockNavigate).toHaveBeenCalledWith('AccessGate', {
-      itemId: 'journal_1',
+    expect(mockNavigate).toHaveBeenCalledWith('Journal', {
+      workId: 'journal_1',
       title: 'Journal Of Open Science',
-      authors: '',
+      institutionId: null,
+      coverUrl: 'https://cdn.tf/journal_1.jpg',
     });
   });
 });

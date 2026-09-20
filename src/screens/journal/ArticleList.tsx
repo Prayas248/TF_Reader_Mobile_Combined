@@ -25,7 +25,10 @@ export function ArticleList({
   articles: Publication[];
   onPress: (id: string) => void;
   indent?: boolean;
-  institutionId: string;
+  // null is the signed-out drill-down (no institution selected at all) —
+  // resolveAccess already treats it as a real value, the public open-access
+  // path, not a missing one (see its own ResolveAccessInput comment).
+  institutionId: string | null;
   session: Session | null;
   loans: Loan[];
   holds: Hold[];

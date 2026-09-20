@@ -294,6 +294,26 @@ export class MockAdapter implements DataSource {
     };
   }
 
+  // Same shape as getWork, minus the institution — no fixture models a signed-out article list
+  // with a mix of open/locked acquisition links yet; the real behaviour is exercised against
+  // ApiAdapter (conformance.ts) and PublicCatalogueScreen.test.tsx's own fake DataSource.
+  async getPublicWork(workId: string): Promise<WorkFeed> {
+    await this.simulate(workId);
+    return {
+      kind: 'navigation',
+      title: 'Mock Journal',
+      children: [
+        {
+          title: 'Volume 01',
+          href: `/opds/v1/public/works/mock-vol-1`,
+          shelfId: 'mock-vol-1',
+          target: 'works',
+          workId: 'mock-vol-1',
+        },
+      ],
+    };
+  }
+
   async getInstitutions(params?: InstitutionQueryParams): Promise<Institution[]> {
     await this.simulate('institutions');
 

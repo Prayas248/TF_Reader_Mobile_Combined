@@ -821,8 +821,14 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
         // downloading/borrowing/bookmarking it — see that store's own header
         // for why Library intersects this against those three instead of a
         // fourth "read" concept.
-        if (articleContext !== undefined) {
-          useArticleJournalStore.getState().recordMembership(itemId, articleContext);
+        // institutionId === null is the signed-out drill-down (no institution at all) — Library
+        // membership is sign-in territory, so this skips recording rather than threading a null
+        // institutionId into articleJournalStore.
+        if (articleContext !== undefined && articleContext.institutionId !== null) {
+          useArticleJournalStore.getState().recordMembership(itemId, {
+            ...articleContext,
+            institutionId: articleContext.institutionId,
+          });
         }
       })
       .catch((err: unknown) => {

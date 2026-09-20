@@ -50,8 +50,12 @@ export default function JournalIssueScreen({ route }: Props) {
   const [articles, setArticles] = useState<Publication[]>([]);
 
   const fetchArticles = useCallback(() => {
-    getCatalogueSource()
-      .getWork(institutionId, workId)
+    // Signed-out (no institution at all): getPublicWork, same branch JournalScreen's own
+    // fetchRoot uses.
+    (institutionId === null
+      ? getCatalogueSource().getPublicWork(workId)
+      : getCatalogueSource().getWork(institutionId, workId)
+    )
       .then((feed: WorkFeed) => setArticles(feed.kind === 'publications' ? feed.articles : []))
       .catch(() => setFailed(true))
       .finally(() => setLoading(false));

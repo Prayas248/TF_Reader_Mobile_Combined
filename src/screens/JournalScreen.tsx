@@ -102,8 +102,13 @@ export default function JournalScreen({ route }: Props) {
   // mount. Retry is the one path that resets them, and it runs from a press
   // handler — see `retry` below.
   const fetchRoot = useCallback(() => {
-    getCatalogueSource()
-      .getWork(institutionId, workId)
+    // Signed-out (no institution at all — PublicCatalogueScreen's own Journals section):
+    // getPublicWork, same "no institution" branch ItemDetailScreen already uses for
+    // getPublicPublication.
+    (institutionId === null
+      ? getCatalogueSource().getPublicWork(workId)
+      : getCatalogueSource().getWork(institutionId, workId)
+    )
       .then((result: WorkFeed) => {
         if (result.coverUrl !== undefined) setResolvedCoverUrl(result.coverUrl);
         setFeed(result);

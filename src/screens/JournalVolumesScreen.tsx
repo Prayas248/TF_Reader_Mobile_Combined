@@ -93,8 +93,12 @@ export default function JournalVolumesScreen({ route }: Props) {
   // the promise's own callbacks — the shape the mount effect below needs.
   const startFetch = useCallback(
     (vIdx: number, workId: string, title: string) => {
-      getCatalogueSource()
-        .getWork(institutionId, workId)
+      // Signed-out (no institution at all): getPublicWork, same branch JournalScreen's own
+      // fetchRoot uses.
+      (institutionId === null
+        ? getCatalogueSource().getPublicWork(workId)
+        : getCatalogueSource().getWork(institutionId, workId)
+      )
         .then((feed: WorkFeed) => {
           if (feed.kind === 'publications') {
             // No issue level under this volume — treat the volume itself as

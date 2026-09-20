@@ -108,4 +108,12 @@ export interface CatalogueSource {
   // Returns navigation children (volumes/issues) or publications (articles).
   // Rejects CatalogueFailure(NOT_FOUND) if the workId is unknown or not PUBLISHED.
   getWork(institutionId: string, workId: string): Promise<WorkFeed>;
+
+  // The anonymous counterpart to getWork — GET /opds/v1/public/works/{workId}, no institution
+  // and no auth header, same reasoning as getPublicFeed/getPublicJournals. An ISSUE's articles
+  // come back through the same "OPEN_ACCESS gets a real link, anything else gets a subscribe
+  // link" mapping getPublicFeed already uses — there is no institution/subject to check
+  // entitlement against, so the acquisition link itself is what tells a signed-out reader
+  // whether an article is open access or needs sign-in.
+  getPublicWork(workId: string): Promise<WorkFeed>;
 }

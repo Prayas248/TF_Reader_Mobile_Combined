@@ -73,4 +73,8 @@ export class PartialApiAdapter implements DataSource {
   getWork(institutionId: string, workId: string): Promise<WorkFeed> {
     return this.api.getWork(institutionId, workId);
   }
+
+  getPublicWork(workId: string): Promise<WorkFeed> {
+    return this.api.getPublicWork(workId);
+  }
 }

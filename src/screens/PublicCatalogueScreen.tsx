@@ -44,25 +44,33 @@
 // second reason would still stand on its own until this screen gains an
 // institution, or flambeau grows a way to queue anonymously.
 //
-// ─── JOURNALS, NOW A REAL SECTION — BUT STILL NOT A REAL DRILL-DOWN ─────────
+// ─── JOURNALS, WITH A REAL DRILL-DOWN — NO ARTICLES ON THIS SCREEN ──────────
 //
 // `getPublicJournals()` (GET /opds/v1/public/journals) is the no-institution
 // counterpart to CatalogueScreen.tsx's own "Journals" section: every published
 // journal, cover included, with no institution and no entitlement to check —
 // a journal has nothing of its own to acquire. Rendered the same way
 // (SectionHeader + ContentCard rows), reusing the exact components the
-// signed-in screen already uses, ABOVE the "All titles" grid below, per the
-// team decision to give a signed-out reader the same two sections a signed-in
-// one sees rather than a bespoke layout for one audience.
+// signed-in screen already uses, ABOVE the "All titles" grid below.
 //
-// TAPPING A JOURNAL GOES TO SIGN-IN, NOT INTO IT. Browsing a journal's own
-// volumes/issues is `getWork(institutionId, workId)` — institution-scoped, and
-// wokay's contract has never published a way to fetch that without one (the
-// real endpoint is literally `/opds/v1/institutions/{id}/works/{workId}`).
-// Building an institution-free work-fetch is real backend + JournalScreen work
-// beyond this screen's own scope, so a tap here routes to AccessGate instead —
-// the same "you need to sign in for this" screen every other gated action in
-// the app already sends a reader to, rather than a dead card or a silent 404.
+// TAPPING A JOURNAL GOES INTO IT — Journal → Volumes & Issues → Issue
+// Articles → Article Details, the SAME screens and the SAME flow a signed-in
+// reader gets, just with `institutionId: null` threaded through instead of a
+// real one. Each screen in that chain calls `getPublicWork(workId)` instead
+// of `getWork(institutionId, workId)` when `institutionId === null` (see
+// JournalScreen.tsx/JournalVolumesScreen.tsx/JournalIssueScreen.tsx's own
+// `fetchRoot`/`startFetch`/`fetchArticles`). Sign-in is only ever reached from
+// INSIDE an article's own detail page, on pressing Read/Play for an
+// ELITE/SUBSCRIPTION article — the ordinary `resolveAccess` →
+// `requires_signin` → AccessGate path every other gated action already uses,
+// not a special case for journals.
+//
+// ARTICLES DELIBERATELY NEVER APPEAR ON THIS SCREEN. `catalogueFeed()` (what
+// `getPublicFeed` calls) excludes WorkType.ARTICLE outright — an article
+// belongs to its journal's own drill-down, not to a flat "every open access
+// thing" grid mixed in with books. A bare article has no cover of its own
+// besides (only its ancestor JOURNAL does), which is what made an earlier,
+// rejected attempt at including them here look badly broken.
 import { useCallback, useEffect, useState } from 'react';
 import {
   Pressable,
@@ -343,10 +351,11 @@ export default function PublicCatalogueScreen() {
                   title={journal.title}
                   imageUrl={journal.coverUrl}
                   onPress={() =>
-                    navigation.navigate('AccessGate', {
-                      itemId: journal.workId,
+                    navigation.navigate('Journal', {
+                      workId: journal.workId,
                       title: journal.title,
-                      authors: '',
+                      institutionId: null,
+                      coverUrl: journal.coverUrl,
                     })
                   }
                 />
