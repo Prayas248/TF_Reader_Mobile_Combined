@@ -549,19 +549,6 @@ function ReaderScreenComponent(
   const [position, setPosition] = useState<ReaderPosition | null>(null);
 
   /**
-   * The edges of the current position, as last reported on `relocated` — carried separately from
-   * `position` because both shells send them on every relocation regardless of format, where
-   * `position` itself is discriminated. Used to disable Prev/Next at the ends: `next`/`prev` already
-   * no-op at a boundary WebView-side (both entries clamp against it), so this is a UI-only
-   * refinement — no behavior changes if it is wrong, only whether the button LOOKS tappable.
-   *
-   * Defaults to `atStart: true` because that is what "nothing has relocated yet" actually means —
-   * the book opens on its first page/CFI, so Prev is correctly disabled before the first
-   * `relocated` ever arrives, matching `send === null`'s own disablement over the same window.
-   */
-  const [bounds, setBounds] = useState({ atStart: true, atEnd: false });
-
-  /**
    * The page-jump field: null when closed, the typed text when open.
    *
    * A STRING, not a number, and deliberately: the field has to be able to hold '' while the user
@@ -572,6 +559,10 @@ function ReaderScreenComponent(
   const [showSearch, setShowSearch] = useState(false);
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [showAccessibility, setShowAccessibility] = useState(false);
+  // The "⋯" trigger's own open state — separate from the four panels above, which still each
+  // manage their own visibility exactly as before. This one only controls the small row-of-rows
+  // menu that picks between them.
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   // Live (updates across a rotation while the dropdown is open, unlike a one-off `Dimensions.get`)
   // — bounds the Accessibility dropdown's ScrollView so it stays scrollable rather than growing
@@ -580,6 +571,19 @@ function ReaderScreenComponent(
   // size too, rather than only reacting to height.
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isAccessibilityDropdownCompactWidth = windowWidth < ACCESSIBILITY_DROPDOWN_COMPACT_MAX_WIDTH;
+
+  // The page's own width — see READER_PAGE_MAX_WIDTH's own comment. `viewer` and every one of its
+  // children (the WebView, the TOC/search/bookmarks panels, the notices) are already positioned
+  // relative to THIS one node, so capping and centering it here is what makes the whole reading
+  // surface — not just the WebView — sit as one comfortable column on a tablet, with no changes
+  // needed to any individual panel's own layout.
+  const pageWidth = Math.min(windowWidth, READER_PAGE_MAX_WIDTH);
+  // Phone: the cap never binds, pageWidth === windowWidth, and the page stays the plain full-bleed
+  // rectangle it always was — no rounded corners, no shadow, no canvas margin to show one against.
+  // Tablet: the cap binds, and this is what turns the rounding/shadow on — see pageFrame's own
+  // comment for why they would look like a stray cutout in each corner if applied unconditionally
+  // on a phone, where the frame's edges coincide exactly with the screen's own edges.
+  const isReaderPageConstrained = pageWidth < windowWidth;
 
   /**
    * Whether ANY panel is covering the book. Drives the two-prop "hide from assistive tech" pair on
@@ -769,10 +773,13 @@ function ReaderScreenComponent(
    * Only the panels whose close is a deliberate act have one. Bookmarks closes the same way and
    * could take another, but its own close path is not in this handoff's scope; add it when that item
    * comes round rather than guessing at the restore rule for it now.
+   *
+   * ONE REF, NOT THREE. Contents, Search and Accessibility used to each have their own dedicated
+   * toolbar button and their own ref; all three (plus Bookmarks) now open from rows inside the
+   * single "⋯" (More) dropdown instead, so there is exactly one physical button for focus to
+   * return to regardless of which panel is closing.
    */
-  const contentsButtonRef = useRef<View | null>(null);
-  const searchButtonRef = useRef<View | null>(null);
-  const accessibilityButtonRef = useRef<View | null>(null);
+  const moreButtonRef = useRef<View | null>(null);
 
   /**
    * Where the merged Accessibility dropdown paints, in SCREEN coordinates — the same reason, and
@@ -823,7 +830,7 @@ function ReaderScreenComponent(
 
   /**
    * Where focus ENTERS the Contents panel — the first chapter row, and the counterpart to
-   * `contentsButtonRef` above. See the effect next to `closeToc` for why it is the only entry ref
+   * `moreButtonRef` above. See the effect next to `closeToc` for why it is the only entry ref
    * the panel needs and why it carries no `setTimeout`.
    *
    * Attached to the row at index 0 only. The rows are a `map`, so every other one gets `null`
@@ -1688,7 +1695,6 @@ function ReaderScreenComponent(
         break;
       case 'relocated': {
         setPosition(message.position);
-        setBounds({ atStart: message.atStart, atEnd: message.atEnd });
 
         // Verify the initial-target flush landed where it was sent, and resend — up to
         // MAX_INITIAL_TARGET_RESENDS times — if a resize or appearance-reanchor race (see
@@ -1702,8 +1708,8 @@ function ReaderScreenComponent(
         // Reporting a wrong intermediate position outward durably overwrites a correct synced
         // position with a stale/default one, on every open, before the resume target even lands -
         // confirmed live, 2026-09-03: opening a book already at page 9 wrote page 1 to the server
-        // within the first second, every time. `setPosition`/`setBounds` above stay unconditional -
-        // they only drive this component's own display, which the resend loop already corrects.
+        // within the first second, every time. `setPosition` above stays unconditional - it only
+        // drives this component's own display, which the resend loop already corrects.
         const pendingVerify = pendingInitialVerifyRef.current;
         let isUnverifiedInitialRelocate = false;
         if (pendingVerify !== null) {
@@ -1895,18 +1901,22 @@ function ReaderScreenComponent(
    * two lines, it is here because those five sites split into two cases that are easy to get wrong
    * and impossible to see from any one of them:
    *
-   *   `true`  — the user finished with the TOC (chose a row). Nothing else is claiming focus, so
-   *             leaving it where the now-unmounted row was strands it; send it back to Contents.
+   *   `true`  — the user finished with the TOC deliberately: the panel's own "Close contents" button
+   *             (mirroring SearchPanel's/BookmarksPanel's own close). Nothing else is claiming focus,
+   *             so leaving it where the now-unmounted button was strands it; send it back to the "⋯"
+   *             trigger that opened it — same destination Search/Bookmarks/Accessibility restore to.
    *   `false` — the TOC is closing because ANOTHER panel is opening over it (Search or Bookmarks
-   *             from the toolbar, a queued search seek, the match bar's "show all results"). That
+   *             from the "⋯" menu, a queued search seek, the match bar's "show all results"). That
    *             panel does its own entry focus, and restoring here would race it — the user would be
    *             moved to Contents a frame after arriving in the search field.
    *
-   * The Contents toggle's own press needs neither: focus is already on it, and it is still mounted.
+   * A chosen ROW's own press (`goTo` + `focusOn(moreButtonRef)` at its own call site) needs neither:
+   * it is not this helper's caller, since navigating away is a third case with its own destination
+   * logic, not a plain close.
    */
   const closeToc = useCallback((restoreFocus: boolean): void => {
     setShowToc(false);
-    if (restoreFocus) focusOn(contentsButtonRef);
+    if (restoreFocus) focusOn(moreButtonRef);
   }, []);
 
   /**
@@ -2406,21 +2416,13 @@ function ReaderScreenComponent(
    *
    * So both gestures are now recognised inside the WebView, where the whole touch is visible and
    * they can be told apart by SHAPE: hold still and the text selects, drag sideways and the page
-   * turns. See `webview/src/touchGesture.ts`. Prev/Next below are unaffected — they were always
-   * buttons, and they still send the same `next`/`prev` commands.
+   * turns. See `webview/src/touchGesture.ts`.
    */
 
-  // Prev/Next are BUTTON-driven, discrete-page-turn controls, and neither concept applies in
-  // continuous scroll: navigation there is native scrolling.
-  // `bounds` is the UI-only refinement on top of that — `next`/`prev` already no-op at an edge
-  // WebView-side, so disabling here only stops the button LOOKING tappable past the end; it changes
-  // no behaviour if `bounds` is ever behind the WebView's own state.
   // EFFECTIVE, not stored: the WebView was told the overridden flow, and an RN half that disagrees
   // would leave the swipe affordances and the WebView's own scroll view set for a layout that is
   // not on screen. See readerA11yLayout.ts.
   const isScrolling = effectiveLayoutFlow(layoutPrefs.flow, a11yLayoutEnabled) === 'scrolled-doc';
-  const prevDisabled = send === null || isScrolling || bounds.atStart;
-  const nextDisabled = send === null || isScrolling || bounds.atEnd;
 
   return (
     <View style={styles.container}>
@@ -2475,115 +2477,187 @@ function ReaderScreenComponent(
         </View>
 
         <View style={styles.toolbarActions}>
-          <Pressable
-            accessibilityRole="button"
-            // Required rather than stylistic: a glyph child gives a screen reader nothing to say,
-            // and every existing test finds buttons by accessible name.
-            accessibilityLabel="Search this title"
-            accessibilityState={{ expanded: showSearch }}
-            ref={searchButtonRef}
-            onPress={() => {
-              // Mutual exclusion with Contents, Bookmarks (and TTS). A UI decision — one panel's
-              // worth of the viewer is all there is room for. It no longer also carries the job of
-              // keeping "Close" unambiguous: each panel now names its own ("Close search",
-              // "Close bookmarks", "Close contents"), so the exclusion is free to change on its
-              // own merits without renaming a control out from under the test suite.
-              closeToc(false); // this panel is taking over — see closeToc's own note.
-              setShowBookmarks(false);
-              setShowAccessibility(false);
-              setShowSearch((open) => !open);
-            }}
-            style={styles.toolbarButton}
-          >
-            <Ionicons name="search-outline" style={styles.toolbarIcon} />
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Bookmarks"
-            accessibilityState={{ expanded: showBookmarks }}
-            onPress={() => {
-              closeToc(false);
-              setShowSearch(false);
-              setShowAccessibility(false);
-              setShowBookmarks((open) => !open);
-            }}
-            style={styles.toolbarButton}
-          >
-            <Ionicons
-              name={isCurrentPositionBookmarked ? 'bookmark' : 'bookmark-outline'}
-              style={[
-                styles.toolbarIcon,
-                isCurrentPositionBookmarked && styles.toolbarIconBookmarked,
-              ]}
-            />
-          </Pressable>
-
-          {/* NOT GATED ON `format`, unlike the panel's own Dyslexia Font row: High Contrast and
-              Reduce Motion apply to every format, and to the shell before a book has even resolved.
-              Gating the whole entry point on the one control that is EPUB-only would take the other
-              two away from PDF and audio readers. */}
-          <Pressable
-            accessibilityRole="button"
-            // Explicit for the same reason as Search and Bookmarks: the glyph gives a screen reader
-            // nothing to say, and every test finds these buttons by accessible name. One merged
-            // entry point now — this button opens both the settings toggles below AND, via a row
-            // inside that same dropdown, the accessibility-information screen — so the label speaks
-            // to the whole panel rather than just the toggles.
-            accessibilityLabel="Accessibility"
-            accessibilityState={{ expanded: showAccessibility }}
-            ref={accessibilityButtonRef}
-            onPress={() => {
-              closeToc(false); // this panel is taking over — see closeToc's own note.
-              setShowSearch(false);
-              setShowBookmarks(false);
-              setShowAccessibility((open) => {
-                const next = !open;
-                if (next) {
-                  // Same measure-on-open shape as DevPreferencesMenu.tsx's `toggleOpen` — see
-                  // `accessibilityAnchor`'s own doc for why this has to be measured rather than laid
-                  // out relatively, now that the dropdown renders inside a `Modal`. A one-shot read
-                  // here, not the reactive `windowWidth` above — an anchor position is a snapshot at
-                  // the moment the dropdown opens, unlike the ScrollView's height cap, which
-                  // deliberately DOES stay live across a rotation while it's already open. Named
-                  // `openWindowWidth` rather than `windowWidth` only to avoid shadowing that outer,
-                  // reactive one — same value shape, different lifetime.
-                  accessibilityButtonRef.current?.measureInWindow((x, y, width, height) => {
-                    const openWindowWidth = Dimensions.get('window').width;
-                    const right = Math.max(0, openWindowWidth - (x + width));
-                    const rightBasedMaxWidth = Math.max(
-                      0,
-                      openWindowWidth - right - ACCESSIBILITY_DROPDOWN_EDGE_MARGIN,
-                    );
-                    // Phone-only ceiling, layered ON TOP of the existing formula rather than
-                    // replacing it — above the compact-width threshold (tablet), `rightBasedMaxWidth`
-                    // is unchanged from before, and is already effectively capped further by
-                    // AccessibilitySettingsPanel's own `container.maxWidth: 560`. Below it,
-                    // `rightBasedMaxWidth` alone is "almost the full screen width minus the button's
-                    // own offset" — nearly edge-to-edge on a phone — so this caps it at 60% of the
-                    // window's width instead, leaving a clearly visible strip of the reader beside it.
-                    const maxWidth =
-                      openWindowWidth < ACCESSIBILITY_DROPDOWN_COMPACT_MAX_WIDTH
-                        ? Math.min(rightBasedMaxWidth, openWindowWidth * 0.6)
-                        : rightBasedMaxWidth;
-                    setAccessibilityAnchor({ top: y + height, right, maxWidth });
-                  });
-                }
-                return next;
-              });
-            }}
-            style={styles.toolbarButton}
-          >
-            <Ionicons name="accessibility-outline" style={styles.toolbarIcon} />
-          </Pressable>
-
-          {/* LAST child, deliberately — see `toolbarExtra`'s own prop doc for why that makes this
-              the rightmost item in the row rather than a floating overlay on top of it. */}
+          {/* `toolbarExtra` ("Aa", reading appearance) before the "⋯" trigger below — see that
+              prop's own doc for why sharing this row (not floating separately) is what guarantees
+              the two can never overlap. */}
           {toolbarExtra}
+
+          {/* ONE ENTRY POINT for everything that used to be four separate toolbar icons (Search,
+              Bookmarks, Accessibility) plus the bottom bar's own Contents button — "one visual
+              system," not four. Each row below does EXACTLY what its old dedicated button did
+              (same accessibilityLabel, same mutual-exclusion, same state) once this menu itself
+              closes; only the trigger moved, not the panels themselves. */}
+          <Pressable
+            accessibilityRole="button"
+            // Constant label, same convention as the Contents row inside this menu (see that row's
+            // own comment): `expanded` alone carries open/closed state, so re-pressing to close
+            // never renames a control a screen reader may already have focused.
+            accessibilityLabel="Menu"
+            accessibilityState={{ expanded: showMoreMenu }}
+            ref={moreButtonRef}
+            onPress={() => setShowMoreMenu((open) => !open)}
+            style={styles.toolbarButton}
+          >
+            <Ionicons name="ellipsis-horizontal" style={styles.toolbarIcon} />
+          </Pressable>
         </View>
       </View>
 
-      <View testID="reader-viewer" style={styles.viewer}>
+      {showMoreMenu && (
+        <Modal transparent visible={showMoreMenu} onRequestClose={() => setShowMoreMenu(false)}>
+          <Pressable
+            testID="more-menu-backdrop"
+            style={StyleSheet.absoluteFill}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            onPress={() => {
+              setShowMoreMenu(false);
+              focusOn(moreButtonRef);
+            }}
+          />
+          <View style={[styles.moreMenu, { top: insets.top + space.xs + 44, right: 12 }]}>
+            <Pressable
+              accessibilityRole="button"
+              // Required rather than stylistic: a glyph child gives a screen reader nothing to say,
+              // and every existing test finds buttons by accessible name.
+              accessibilityLabel="Search this title"
+              accessibilityState={{ expanded: showSearch }}
+              onPress={() => {
+                setShowMoreMenu(false);
+                // Mutual exclusion with Contents, Bookmarks (and TTS) — one panel's worth of the
+                // viewer is all there is room for. Each panel names its own close affordance
+                // ("Close search", "Close bookmarks", "Close contents"), so this exclusion is free
+                // to change on its own merits without renaming a control out from under the tests.
+                closeToc(false); // this panel is taking over — see closeToc's own note.
+                setShowBookmarks(false);
+                setShowAccessibility(false);
+                setShowSearch((open) => !open);
+              }}
+              style={styles.moreMenuRow}
+            >
+              <Ionicons name="search-outline" style={styles.moreMenuIcon} />
+              <Text style={styles.moreMenuLabel}>Search</Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Bookmarks"
+              accessibilityState={{ expanded: showBookmarks }}
+              onPress={() => {
+                setShowMoreMenu(false);
+                closeToc(false);
+                setShowSearch(false);
+                setShowAccessibility(false);
+                setShowBookmarks((open) => !open);
+              }}
+              style={styles.moreMenuRow}
+            >
+              <Ionicons
+                name={isCurrentPositionBookmarked ? 'bookmark' : 'bookmark-outline'}
+                style={[styles.moreMenuIcon, isCurrentPositionBookmarked && styles.toolbarIconBookmarked]}
+              />
+              <Text style={styles.moreMenuLabel}>Bookmarks</Text>
+            </Pressable>
+
+            {/* NOT GATED ON `format`, unlike the panel's own Dyslexia Font row: High Contrast and
+                Reduce Motion apply to every format, and to the shell before a book has even
+                resolved. Gating the whole entry point on the one control that is EPUB-only would
+                take the other two away from PDF and audio readers. */}
+            <Pressable
+              accessibilityRole="button"
+              // Explicit for the same reason as Search and Bookmarks: the glyph gives a screen
+              // reader nothing to say, and every test finds these rows by accessible name. One
+              // merged entry point — this row opens both the settings toggles below AND, via a row
+              // inside that same dropdown, the accessibility-information screen.
+              accessibilityLabel="Accessibility"
+              accessibilityState={{ expanded: showAccessibility }}
+              onPress={() => {
+                setShowMoreMenu(false);
+                closeToc(false); // this panel is taking over — see closeToc's own note.
+                setShowSearch(false);
+                setShowBookmarks(false);
+                setShowAccessibility((open) => {
+                  const next = !open;
+                  if (next) {
+                    // Same measure-on-open shape as DevPreferencesMenu.tsx's `toggleOpen` — see
+                    // `accessibilityAnchor`'s own doc for why this has to be measured rather than
+                    // laid out relatively, now that the dropdown renders inside a `Modal`. Measured
+                    // off `moreButtonRef` (the "⋯" trigger), not this row itself — the row is about
+                    // to unmount along with the rest of this menu, but the button stays put.
+                    moreButtonRef.current?.measureInWindow((x, y, width, height) => {
+                      const openWindowWidth = Dimensions.get('window').width;
+                      const right = Math.max(0, openWindowWidth - (x + width));
+                      const rightBasedMaxWidth = Math.max(
+                        0,
+                        openWindowWidth - right - ACCESSIBILITY_DROPDOWN_EDGE_MARGIN,
+                      );
+                      // Phone-only ceiling, layered ON TOP of the existing formula rather than
+                      // replacing it — above the compact-width threshold (tablet), `rightBasedMaxWidth`
+                      // is unchanged from before, and is already effectively capped further by
+                      // AccessibilitySettingsPanel's own `container.maxWidth: 560`. Below it,
+                      // `rightBasedMaxWidth` alone is "almost the full screen width minus the button's
+                      // own offset" — nearly edge-to-edge on a phone — so this caps it at 60% of the
+                      // window's width instead, leaving a clearly visible strip of the reader beside it.
+                      const maxWidth =
+                        openWindowWidth < ACCESSIBILITY_DROPDOWN_COMPACT_MAX_WIDTH
+                          ? Math.min(rightBasedMaxWidth, openWindowWidth * 0.6)
+                          : rightBasedMaxWidth;
+                      setAccessibilityAnchor({ top: y + height, right, maxWidth });
+                    });
+                  }
+                  return next;
+                });
+              }}
+              style={styles.moreMenuRow}
+            >
+              <Ionicons name="accessibility-outline" style={styles.moreMenuIcon} />
+              <Text style={styles.moreMenuLabel}>Accessibility</Text>
+            </Pressable>
+
+            {/* THE COUNT STAYS OUT OF THE ACCESSIBLE NAME — same reasoning as when this was the
+                bottom bar's own button: a name that changes from "Contents (0)" to "Contents (37)"
+                when the `toc` message lands would rename a control the user may already have
+                focused. `expanded` is OMITTED, not `false`, when there is no TOC — a control that
+                can never open is not "collapsed", disabled is the whole truth in that state.
+                LABEL NEVER FLIPS TO "Close contents" — same convention as the Search/Bookmarks/
+                Accessibility rows above, none of which rename themselves either. Closing now goes
+                through the panel's own dedicated "Close contents" button (mirroring Search's/
+                Bookmarks'), not a re-press of this row — see `closeToc`'s own doc for why that
+                button, not this one, is the one that restores focus here. */}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Contents"
+              accessibilityState={toc.length === 0 ? { disabled: true } : { expanded: showToc }}
+              disabled={toc.length === 0}
+              onPress={() => {
+                setShowMoreMenu(false);
+                setShowSearch(false); // mutual exclusion — see the row above
+                setShowBookmarks(false);
+                setShowAccessibility(false);
+                setShowToc((open) => !open);
+              }}
+              style={[styles.moreMenuRow, toc.length === 0 && styles.moreMenuRowDisabled]}
+            >
+              <Ionicons name="list-outline" style={styles.moreMenuIcon} />
+              <Text style={styles.moreMenuLabel}>
+                {toc.length === 0 ? 'Contents' : `Contents (${toc.length})`}
+              </Text>
+            </Pressable>
+          </View>
+        </Modal>
+      )}
+
+      {/* The page's own frame — a shadow, never clipped, around `viewer`'s own rounded-and-clipped
+          content (see pageFrame/viewer's own style comments). `width` is inline because a static
+          StyleSheet value can't see the window — `pageWidth` above is what actually caps and
+          centers this on a tablet; `flex: 1` fills the phone case where the cap is a no-op. */}
+      <View
+        style={[styles.pageFrame, isReaderPageConstrained && styles.pageFrameConstrained, { width: pageWidth }]}
+      >
+        <View
+          testID="reader-viewer"
+          style={[styles.viewer, isReaderPageConstrained && styles.viewerConstrained]}
+        >
         {/*
           ReaderWebView is KEYED ON THE SHELL URI, so a different shell is a different
           component instance rather than the same one told to navigate. ReaderWebView
@@ -2671,7 +2745,7 @@ function ReaderScreenComponent(
             importantForAccessibility={anyPanelOpen ? 'no-hide-descendants' : 'yes'}
             style={styles.ttsCueWrap}
           >
-            <Text style={styles.ttsCueIcon}>🔊</Text>
+            <Ionicons name="volume-high" style={styles.ttsCueIcon} />
           </View>
         )}
 
@@ -2707,7 +2781,27 @@ function ReaderScreenComponent(
 
         {showToc && (
           <View style={styles.tocPanel}>
-            <Text style={styles.tocTitle}>Contents</Text>
+            <View style={styles.tocHeaderRow}>
+              <View style={styles.tocHeaderTitleRow}>
+                <Ionicons name="list-outline" style={styles.tocHeaderIcon} />
+                <Text style={styles.tocTitle}>Contents</Text>
+              </View>
+              {/* Named for the same reason SearchPanel's/BookmarksPanel's are — a screen-reader user
+                  arriving at one out of visual context cannot tell which is which from "Close"
+                  alone. This is the ONLY close affordance for this panel now: the "⋯" menu's own
+                  Contents row always just opens (matching Search/Bookmarks/Accessibility), so
+                  closing no longer round-trips through that menu the way it briefly needed to when
+                  this panel had no close button of its own. Icon, not text — same circular
+                  close-button convention Search/Bookmarks now use. */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close contents"
+                onPress={() => closeToc(true)}
+                style={styles.tocClose}
+              >
+                <Ionicons name="close" style={styles.tocCloseIcon} />
+              </Pressable>
+            </View>
             {/*
               DO NOT ADD `flex: 1` HERE "so the list scrolls". It was tried, and it is a
               no-op: RN's ScrollView already carries flexGrow/flexShrink: 1 in its own
@@ -2794,7 +2888,7 @@ function ReaderScreenComponent(
                           // THE ONE "restore focus" CASE. `goTo` deliberately does not do this
                           // itself — it is shared with bookmarks and the page-jump field, where
                           // Contents is not where the user came from. Here it is.
-                          focusOn(contentsButtonRef);
+                          focusOn(moreButtonRef);
                         }}
                         // Indent, do not inset the row: paddingLeft keeps the whole
                         // width tappable at every depth, where marginLeft would shrink
@@ -2892,7 +2986,7 @@ function ReaderScreenComponent(
               // result also closes this panel and deliberately does NOT restore focus here — that
               // journey ends somewhere else entirely (the match bar, or the book), which is its own
               // open question and not answered by sending the user back to the toolbar.
-              focusOn(searchButtonRef);
+              focusOn(moreButtonRef);
             }}
             status={search.status}
             hits={search.hits}
@@ -2979,7 +3073,7 @@ function ReaderScreenComponent(
 
           NO TITLE, NO NAMED CLOSE BUTTON, deliberately — matches `DevPreferencesMenu`'s dropdown
           exactly: dismiss by tapping outside, by pressing the ♿ toggle again, or (Android) the back
-          button. `focusOn(accessibilityButtonRef)` still runs on every dismiss path below, so
+          button. `focusOn(moreButtonRef)` still runs on every dismiss path below, so
           screen-reader focus still lands back on the button that opened this, same restore rule as
           every other panel here — only the visible "Close" affordance is gone, not the behaviour.
         */}
@@ -2989,7 +3083,7 @@ function ReaderScreenComponent(
             visible={showAccessibility}
             onRequestClose={() => {
               setShowAccessibility(false);
-              focusOn(accessibilityButtonRef);
+              focusOn(moreButtonRef);
             }}
           >
             <Pressable
@@ -2999,7 +3093,7 @@ function ReaderScreenComponent(
               importantForAccessibility="no-hide-descendants"
               onPress={() => {
                 setShowAccessibility(false);
-                focusOn(accessibilityButtonRef);
+                focusOn(moreButtonRef);
               }}
             />
             <View
@@ -3059,6 +3153,7 @@ function ReaderScreenComponent(
             <Text style={styles.privacyCoverText}>Nexus</Text>
           </View>
         )}
+        </View>
       </View>
 
       {/* Docked below the viewer rather than an absolute overlay like the TOC/Search panels — its
@@ -3073,113 +3168,74 @@ function ReaderScreenComponent(
           accessibilityElementsHidden={controlsHidden}
           importantForAccessibility={controlsHidden ? 'no-hide-descendants' : 'yes'}
         >
-          {/* Explicit label because the glyph carries no accessible name — "‹ Prev" reads as the
-            guillemet plus an abbreviation. `accessibilityState` is explicit for the same reason it
-            is on Next and Contents: `disabled` alone leaves it to the platform to synthesise, and
-            this row's disabled states are load-bearing (see `prevDisabled`). */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Previous page"
-            accessibilityState={{ disabled: prevDisabled }}
-            disabled={prevDisabled}
-            onPress={() => {
-              pendingInitialVerifyRef.current = null; // see `goTo`'s own note on why
-              send?.({ type: 'prev' });
-            }}
-            style={[styles.button, prevDisabled && styles.buttonDisabled]}
-          >
-            <Text style={styles.buttonText}>‹ Prev</Text>
-          </Pressable>
-
-          {/*
-          THE COUNT STAYS OUT OF THE ACCESSIBLE NAME. The visible text carries it, but a name that
-          changes from "Contents (0)" to "Contents (37)" when the `toc` message lands renames a
-          control the user may already have focused. The name is stable; the count is decoration.
-
-          `expanded` IS OMITTED WHEN THERE IS NO TOC, rather than reported as `false`. A control
-          that can never open is not "collapsed" — pairing `expanded: false` with `disabled: true`
-          invites VoiceOver's "collapsed, expandable" phrasing for a button that will never expand.
-          Disabled is the whole truth in that state; expanded is the whole truth in the other.
-        */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={showToc ? 'Close contents' : 'Contents'}
-            accessibilityState={toc.length === 0 ? { disabled: true } : { expanded: showToc }}
-            ref={contentsButtonRef}
-            disabled={toc.length === 0}
-            onPress={() => {
-              setShowSearch(false); // mutual exclusion — see the toolbar button above
-              setShowBookmarks(false);
-              setShowAccessibility(false);
-              setShowToc((open) => !open);
-            }}
-            style={[styles.button, toc.length === 0 && styles.buttonDisabled]}
-          >
-            <Text style={styles.buttonText}>{showToc ? 'Close' : `Contents (${toc.length})`}</Text>
-          </Pressable>
-
+        <View style={styles.controlsRow} testID="reader-controls">
           {/*
           THE PAGE INDICATOR, DOUBLING AS THE PAGE-JUMP AFFORDANCE. PDF-only by construction rather
           than by choice: `position` is discriminated by addressing scheme, and a reflowable book
           reports a CFI because it has no stable page. Rendering nothing for a CFI is the honest
-          outcome — a fabricated "page 3 of 400" would be a number that changes with the font size.
+          outcome — a fabricated "page 3 of 400" would be a number that changes with the font size,
+          and it is also why EPUB gets no progress percentage below: epub.js only has one to offer
+          once `book.locations` has been generated, which nothing in this bridge does yet.
 
-          THE INDICATOR *IS* THE CONTROL, rather than a fourth item in this row. The row is already
-          three buttons wide on a phone, and "tap where the page number is to change the page" needs no
-          explaining. It also means the affordance appears exactly when it is usable, because both it
-          and the number come from the same message.
-
-          NOTE WHAT THIS IS NOT: a table of contents. A PDF with no outline has no contents, and
-          Contents stays correctly disabled for it — most PDFs in the wild are that. This is the
-          navigation such a book can actually offer.
+          THE INDICATOR *IS* THE CONTROL, rather than a separate button. "Tap where the page number
+          is to change the page" needs no explaining, and the affordance appears exactly when it is
+          usable, because both it and the number come from the same message.
         */}
-          {position?.kind === 'page' &&
-            (pageJump === null ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Page ${position.page} of ${position.pageCount}. Go to a page.`}
-                onPress={() => setPageJump('')}
-                testID="reader-page-indicator"
-              >
-                <Text style={styles.pageIndicator}>
-                  {position.page} / {position.pageCount}
-                </Text>
-              </Pressable>
-            ) : (
-              <TextInput
-                testID="reader-page-jump"
-                // The placeholder carries the RANGE, which is the whole benefit of the host knowing
-                // pageCount: the bound is visible before you type rather than discovered by being
-                // refused. A placeholder is not a reliable accessible name on Android, so the label is
-                // explicit as well.
-                accessibilityLabel={`Go to page, 1 to ${position.pageCount}`}
-                placeholder={`1–${position.pageCount}`}
-                placeholderTextColor={color.textSecondary}
-                style={styles.pageJump}
-                value={pageJump}
-                onChangeText={setPageJump}
-                onSubmitEditing={submitPageJump}
-                onBlur={() => setPageJump(null)}
-                keyboardType="number-pad"
-                returnKeyType="go"
-                autoFocus
-                maxLength={String(position.pageCount).length}
-              />
-            ))}
+          <View style={styles.controlsCenter}>
+            {position?.kind === 'page' &&
+              (pageJump === null ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Page ${position.page} of ${position.pageCount}. Go to a page.`}
+                  onPress={() => setPageJump('')}
+                  testID="reader-page-indicator"
+                >
+                  <Text style={styles.pageIndicator}>
+                    {position.page} / {position.pageCount}
+                  </Text>
+                </Pressable>
+              ) : (
+                <TextInput
+                  testID="reader-page-jump"
+                  // The placeholder carries the RANGE, which is the whole benefit of the host knowing
+                  // pageCount: the bound is visible before you type rather than discovered by being
+                  // refused. A placeholder is not a reliable accessible name on Android, so the label is
+                  // explicit as well.
+                  accessibilityLabel={`Go to page, 1 to ${position.pageCount}`}
+                  placeholder={`1–${position.pageCount}`}
+                  placeholderTextColor={color.textSecondary}
+                  style={styles.pageJump}
+                  value={pageJump}
+                  onChangeText={setPageJump}
+                  onSubmitEditing={submitPageJump}
+                  onBlur={() => setPageJump(null)}
+                  keyboardType="number-pad"
+                  returnKeyType="go"
+                  autoFocus
+                  maxLength={String(position.pageCount).length}
+                />
+              ))}
+          </View>
+        </View>
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Next page"
-            accessibilityState={{ disabled: nextDisabled }}
-            disabled={nextDisabled}
-            onPress={() => {
-              pendingInitialVerifyRef.current = null; // see `goTo`'s own note on why
-              send?.({ type: 'next' });
-            }}
-            style={[styles.button, nextDisabled && styles.buttonDisabled]}
-          >
-            <Text style={styles.buttonText}>Next ›</Text>
-          </Pressable>
+          {/* Progress track — PDF only, same reasoning as the page indicator above: a page/pageCount
+              ratio is a real number for an addressing scheme with a stable page count, and would be
+              a fabricated one for a reflowable EPUB. Purely decorative (`accessibilityElementsHidden`)
+              since the page indicator above already speaks the same information to a screen reader. */}
+          {position?.kind === 'page' && (
+            <View
+              style={styles.progressTrack}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <View
+                style={[
+                  styles.progressFill,
+                  { width: `${Math.min(100, Math.round((position.page / position.pageCount) * 100))}%` },
+                ]}
+              />
+            </View>
+          )}
         </View>
       )}
     </View>
@@ -3240,6 +3296,14 @@ const ACCESSIBILITY_DROPDOWN_EDGE_MARGIN = 12;
 // before this threshold existed.
 const ACCESSIBILITY_DROPDOWN_COMPACT_MAX_WIDTH = 600;
 
+// The reading column's own ceiling — a comfortable line length (roughly the same "don't let a
+// tablet stretch every line across the whole screen" reasoning most reader apps apply), not a
+// phone/tablet breakpoint switch. Below this, `Math.min` is a no-op and the page fills the phone
+// edge to edge as before; at or above it (an iPad, a large-screen Android tablet, a phone in wide
+// landscape), the page centers as a fixed-width column with visible canvas on both sides — see
+// `pageWidth`'s own computation, just below, for where this is actually used.
+const READER_PAGE_MAX_WIDTH = 760;
+
 const styles = StyleSheet.create({
   // Reads as a status line rather than a control: no border, no press affordance. Tabular figures so
   // the row does not shift width as the page number gains a digit.
@@ -3263,8 +3327,32 @@ const styles = StyleSheet.create({
   },
   // flex:1 down to the WebView. See the note in ReaderWebView.tsx — epub.js
   // renders nothing at all into a zero-height container.
-  container: { flex: 1, backgroundColor: color.white },
-  viewer: { flex: 1 },
+  //
+  // `surface`, not `white`: on a tablet, `pageFrame` below caps the page short of the full window
+  // width, and this is what shows in the margin either side of it — a plain reading canvas the
+  // page sits on, not an invisible extension of the page itself. On a phone, `pageWidth` is a
+  // no-op (the cap never binds), so this is never actually seen there.
+  container: { flex: 1, backgroundColor: color.surface },
+  // The page's own frame. Only `pageFrameConstrained` (applied conditionally — see
+  // `isReaderPageConstrained`'s own comment) adds the rounding/shadow that make it read as a
+  // distinct card; the base style alone is a plain, unrounded, unshadowed box, which is what keeps
+  // a phone's full-bleed reading view pixel-identical to before this change.
+  pageFrame: {
+    flex: 1,
+    alignSelf: 'center',
+    backgroundColor: color.white,
+  },
+  // A shadow and `overflow: 'hidden'` fight each other (the clip that gives `viewer` its rounded
+  // corners would clip the shadow too), so this is the unclipped outer box and `viewerConstrained`
+  // below is the clipped inner one — the same two-box pattern this app already uses wherever a
+  // card needs both (see DevPreferencesMenu's own dropdown shadow for the same colour/opacity).
+  pageFrameConstrained: {
+    borderRadius: radius.card,
+    boxShadow: '0px 2px 12px rgba(0, 34, 68, 0.12)',
+    elevation: 3,
+  },
+  viewer: { flex: 1, backgroundColor: color.white },
+  viewerConstrained: { borderRadius: radius.card, overflow: 'hidden' },
 
   // This screen's own header bar — dark navy, full-width, replacing native-stack's AppHeader (see
   // this View's own JSX comment). `paddingTop` is applied inline (insets.top + space.xs) since a
@@ -3304,6 +3392,34 @@ const styles = StyleSheet.create({
   // Ultramarine (`color.primary`) — the same brand blue used for active tabs/links elsewhere, so a
   // bookmarked page reads as an active state rather than an arbitrary accent (CONVENTIONS §5).
   toolbarIconBookmarked: { color: color.primary },
+
+  // Same card recipe as DevPreferencesMenu.tsx's own `dropdown` — one visual system, not two
+  // dropdown styles that happen to look similar. `top`/`right` are applied inline (this menu
+  // renders inside its own full-screen Modal rather than a `position: relative` wrapper around the
+  // trigger, so there is no local anchor to lay out against; `moreButtonRef`'s measured position
+  // isn't needed here the way it is for the Accessibility panel, since the trigger always sits in
+  // the same top-right corner of the toolbar regardless of device width).
+  moreMenu: {
+    position: 'absolute',
+    minWidth: 200,
+    backgroundColor: color.white,
+    borderRadius: radius.tile,
+    borderWidth: 1,
+    borderColor: color.border,
+    paddingVertical: 4,
+    boxShadow: '0px 4px 12px rgba(0, 34, 68, 0.12)',
+    elevation: 6,
+  },
+  moreMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 44,
+    paddingHorizontal: 12,
+    gap: space.sm,
+  },
+  moreMenuRowDisabled: { opacity: 0.4 },
+  moreMenuIcon: { fontSize: 18, color: color.textPrimary, width: 22, textAlign: 'center' },
+  moreMenuLabel: { fontSize: type.body.size, lineHeight: type.body.lineHeight, color: color.textPrimary },
 
   highlightNoticeWrap: { position: 'absolute', left: 8, right: 8, bottom: 8, alignItems: 'center' },
   // Clears the match bar (bottom 12, ~48 tall) so the two never overlap.
@@ -3348,7 +3464,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 3,
   },
-  ttsCueIcon: { fontSize: 15 },
+  ttsCueIcon: { fontSize: 16, color: color.subscription },
 
   errorBanner: {
     backgroundColor: color.errorTint,
@@ -3379,7 +3495,20 @@ const styles = StyleSheet.create({
     borderTopColor: color.border,
     padding: space.md,
   },
-  tocTitle: { fontSize: 18, fontWeight: '700', color: color.textPrimary, marginBottom: 12 },
+  // Same shape as BookmarksPanel's/SearchPanel's own header — one visual system for every panel's
+  // header (icon + title, circular icon close button), not a bespoke one for Contents.
+  tocHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  tocHeaderTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  tocHeaderIcon: { fontSize: 20, color: color.primary },
+  tocTitle: { fontSize: 18, fontWeight: '700', color: color.textPrimary },
+  tocClose: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.card,
+  },
+  tocCloseIcon: { fontSize: 22, color: color.textSecondary },
 
   // The merged Accessibility dropdown's chrome — content-sized, not the opaque full-bleed overlay
   // TOC/Bookmarks use, since (unlike those) this panel holds no book-derived content that needs
@@ -3440,21 +3569,25 @@ const styles = StyleSheet.create({
   },
   privacyCoverText: { fontSize: 17, fontWeight: '700', color: color.textSecondary },
 
+  // Slim by design — see the top toolbar's own note. PDF-only now (see the page indicator's own
+  // comment): a hairline strip holding just the page indicator/jump field and the progress track
+  // below it. Prev/Next are gone — page turning is the swipe gesture inside the WebView (and
+  // TalkBack's own `onPageTurnRequested` action for a screen reader), not a button any more.
   controls: {
-    flexDirection: 'row',
     borderTopWidth: 1,
     borderTopColor: color.border,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: space.sm,
+    paddingHorizontal: 4,
+    paddingBottom: space.xs,
   },
-  button: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderRadius: radius.card,
-    backgroundColor: color.surface,
+  controlsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  controlsCenter: { flex: 1, alignItems: 'center' },
+  progressTrack: {
+    height: 2,
+    marginHorizontal: 12,
+    marginTop: 2,
+    borderRadius: 1,
+    backgroundColor: color.border,
+    overflow: 'hidden',
   },
-  buttonDisabled: { opacity: 0.4 },
-  buttonText: { fontSize: 14, fontWeight: '700', color: color.textPrimary },
+  progressFill: { height: '100%', backgroundColor: color.primary },
 });

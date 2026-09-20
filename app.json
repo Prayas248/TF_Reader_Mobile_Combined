@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "scheme": "tfreader",
     "userInterfaceStyle": "automatic",
-    "icon": "./assets/nexus-3.png",
+    "icon": "./assets/NEXUS-logo3.png",
     "assetBundlePatterns": [
       "assets/**/*"
     ],
@@ -17,7 +17,7 @@
     "android": {
       "package": "com.taylorandfrancis.tfreader.dev",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/nexus-3.png",
+        "foregroundImage": "./assets/NEXUS-logo3.png",
         "backgroundColor": "#002244"
       },
       "permissions": [

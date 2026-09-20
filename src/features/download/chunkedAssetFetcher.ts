@@ -33,10 +33,19 @@ import { DownloadError, DownloadFailure } from './errors';
 export const CHUNK_SIZE_BYTES = 1024 * 1024; // 1 MiB — see this file's header for the reasoning
 
 // Same abort-controller-plus-timer shape as every other network call in this directory. Smaller
-// than ASSET_FETCH_TIMEOUT_MS (60s) on purpose: that value was sized for the WHOLE asset;  one
+// than ASSET_FETCH_TIMEOUT_MS (60s) on purpose: that value was sized for the WHOLE asset; one
 // 1 MiB chunk taking longer than 8s (~128 KiB/s floor) means the connection is bad enough that
 // waiting on THIS chunk isn't worth it — a fresh chunk request (still resumable from here) is a
 // better use of the time than one long wait.
+//
+// BRIEFLY RAISED TO 25000 ON 2026-09-21, THEN REVERTED THE SAME DAY — an EPUB open was aborting
+// with "Fetch request has been canceled" (this file's own AbortController firing), which looked
+// like this timeout being too tight for a slow connection. It was not: the real cause, found right
+// after via adb logcat, was the dev emulator's DNS being broken outright (`UnknownHostException`
+// resolving `s3.amazonaws.com`, confirmed by `ping google.com` also failing the same way) — a
+// stale emulator network cache, fixed by restarting the emulator with an explicit DNS server, not
+// by anything in this file. 8s is fine once DNS actually resolves; raising it only masked the
+// symptom for one more request before the real (still-broken) lookup failed anyway.
 const CHUNK_TIMEOUT_MS = 8000;
 
 // Deliberately its own directory, separate from contentStore.ts's `tf-reader-content/` — a

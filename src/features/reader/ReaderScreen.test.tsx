@@ -424,25 +424,45 @@ async function mountReader(props?: { onOpenAccessibilityInfo?: () => void }): Pr
 }
 
 /**
- * Press the Contents button. Targets the Pressable by role rather than its inner
+ * Open the "⋯" (More) menu and press one of its rows by accessible name. Search, Bookmarks,
+ * Accessibility and Contents all moved from standalone always-rendered toolbar/bottom-bar buttons
+ * into rows inside this one menu — the row itself still carries the exact original
+ * accessibilityLabel/accessibilityState/onPress each had as a standalone button, so every test that
+ * used to press one of those buttons directly now opens the menu first.
+ */
+async function pressMoreMenuItem(name: string): Promise<void> {
+  await openMoreMenuOnly();
+  await fireEvent.press(screen.getByRole('button', { name, includeHiddenElements: true }));
+}
+
+/**
+ * Opens the "⋯" menu without pressing any row inside it — lets a row's current accessibilityState
+ * be inspected (it exists only while the menu is open) without also changing what it reflects.
+ *
+ * NO-OP IF ALREADY OPEN. The trigger's label is the constant "Menu" regardless of state (see its
+ * own comment in ReaderScreen.tsx), so a second press would TOGGLE IT CLOSED rather than being
+ * harmlessly idempotent — this checks `expanded` first so callers can call it defensively between
+ * assertions without having to track the menu's open/closed state themselves.
+ */
+async function openMoreMenuOnly(): Promise<void> {
+  // `includeHiddenElements`: while a panel is open the toolbar (menu trigger included) is hidden
+  // from assistive tech but stays visible and tappable — which is what a press simulates. That
+  // hidden state is asserted on its own, in the background-hiding tests below.
+  const trigger = screen.getByRole('button', { name: 'Menu', includeHiddenElements: true });
+  if (trigger.props.accessibilityState?.expanded) return;
+  await fireEvent.press(trigger);
+}
+
+/**
+ * Press the Contents row. Targets the Pressable by role rather than its inner
  * Text: `press` needs the element that owns the touch responder, and the label is
  * a child of it.
  */
 async function openContents(): Promise<void> {
-  // `fireEvent` is awaitable in @testing-library/react-native v14 — it does its own
-  // act() wrapping and returns a promise, so dropping the await is a lint error
-  // here (no-floating-promises is on for this directory) as well as a race.
-  //
   // No chapter count in the query: the count lives in the visible text but deliberately not in
   // the accessible name, so that the name does not change under a focused control when the `toc`
-  // message lands. See the Contents button in ReaderScreen.tsx.
-  // `includeHiddenElements`: while Search or Bookmarks is open this button is hidden from assistive
-  // tech (those panels carry their own close, so the row behind them is background) but is still
-  // visible and tappable — which is what a press simulates. That it IS hidden in that state is
-  // asserted on its own, in the background-hiding tests below, rather than implied here.
-  await fireEvent.press(
-    screen.getByRole('button', { name: 'Contents', includeHiddenElements: true }),
-  );
+  // message lands. See the Contents row in ReaderScreen.tsx.
+  await pressMoreMenuItem('Contents');
 }
 
 function flatToc(count: number): ReaderTocItem[] {
@@ -567,92 +587,6 @@ describe('an EPUB grouping heading with no href', () => {
     expect(screen.getByText('Chapter 1').parent?.props.accessibilityHint).toBe(
       'Navigates to this chapter',
     );
-  });
-});
-
-describe('Prev/Next navigation controls', () => {
-  function prevButton() {
-    return screen.getByRole('button', { name: 'Previous page' });
-  }
-
-  function nextButton() {
-    return screen.getByRole('button', { name: 'Next page' });
-  }
-
-  async function relocate(atStart: boolean, atEnd: boolean): Promise<void> {
-    await deliver({
-      type: 'relocated',
-      position: { kind: 'cfi', cfi: 'epubcfi(/6/4[chap01]!/4/2/2)' },
-      atStart,
-      atEnd,
-    });
-  }
-
-  // Same reasoning as ReaderWebView's own READY_TIMEOUT window: before the first `relocated`
-  // arrives, "the book opens on its first page" is what Prev being disabled already means, and
-  // this is the state a fresh open sits in for however long the WebView takes to report it.
-  it('disables Prev before any position has arrived, matching a book opening on its first page', async () => {
-    await mountReader();
-    await reportReady();
-
-    expect(prevButton().props.accessibilityState).toMatchObject({ disabled: true });
-    expect(nextButton().props.accessibilityState).toMatchObject({ disabled: false });
-  });
-
-  it('disables Prev at the start and Next at the end, independently', async () => {
-    await mountReader();
-    await reportReady();
-
-    await relocate(true, false);
-    expect(prevButton().props.accessibilityState).toMatchObject({ disabled: true });
-    expect(nextButton().props.accessibilityState).toMatchObject({ disabled: false });
-
-    await relocate(false, true);
-    expect(prevButton().props.accessibilityState).toMatchObject({ disabled: false });
-    expect(nextButton().props.accessibilityState).toMatchObject({ disabled: true });
-  });
-
-  it('re-enables both once neither edge applies any more', async () => {
-    await mountReader();
-    await reportReady();
-    await relocate(true, false);
-
-    await relocate(false, false);
-
-    expect(prevButton().props.accessibilityState).toMatchObject({ disabled: false });
-    expect(nextButton().props.accessibilityState).toMatchObject({ disabled: false });
-  });
-
-  // CONTINUOUS SCROLL IS NAVIGATED BY SCROLLING, NOT BY THESE BUTTONS — so both are disabled
-  // unconditionally in that flow, independent of atStart/atEnd (which the WebView still reports,
-  // scrolled by whatever "one screenful" means there — see epub.entry.ts/pdf.entry.ts).
-  it('disables both in continuous scroll, regardless of position', async () => {
-    await mountReader();
-    await reportReady();
-    await relocate(false, false); // clearly not at either edge
-
-    await act(async () => {
-      __emitPrefsChange(makePrefs({ layout: { flow: 'scrolled-doc', spread: 'single' } }));
-    });
-
-    expect(prevButton().props.accessibilityState).toMatchObject({ disabled: true });
-    expect(nextButton().props.accessibilityState).toMatchObject({ disabled: true });
-  });
-
-  it('re-enables on returning to paginated flow, honouring the last reported edges', async () => {
-    await mountReader();
-    await reportReady();
-    await relocate(false, false);
-    await act(async () => {
-      __emitPrefsChange(makePrefs({ layout: { flow: 'scrolled-doc', spread: 'single' } }));
-    });
-
-    await act(async () => {
-      __emitPrefsChange(makePrefs({ layout: { flow: 'paginated', spread: 'single' } }));
-    });
-
-    expect(prevButton().props.accessibilityState).toMatchObject({ disabled: false });
-    expect(nextButton().props.accessibilityState).toMatchObject({ disabled: false });
   });
 });
 
@@ -1421,7 +1355,7 @@ describe('the merged accessibility dropdown', () => {
   it('opens from one ♿ toolbar button, with no title or named close row', async () => {
     await mountReader();
 
-    await fireEvent.press(screen.getByLabelText('Accessibility'));
+    await pressMoreMenuItem('Accessibility');
     expect(screen.getByLabelText('High contrast: Off')).toBeTruthy();
 
     // No header any more — matches DevPreferencesMenu's own headerless dropdown. Dismiss is
@@ -1432,7 +1366,7 @@ describe('the merged accessibility dropdown', () => {
 
   it('dismisses on a backdrop tap and restores focus to the toolbar button', async () => {
     await mountReader();
-    await fireEvent.press(screen.getByLabelText('Accessibility'));
+    await pressMoreMenuItem('Accessibility');
     expect(screen.getByLabelText('High contrast: Off')).toBeTruthy();
 
     await fireEvent.press(
@@ -1444,33 +1378,26 @@ describe('the merged accessibility dropdown', () => {
   });
 
   it('is mutually exclusive with Search and Bookmarks, both ways round', async () => {
-    // `includeHiddenElements`, same reasoning as `openSearch`/`openContents` elsewhere in this
-    // file: with a panel open the toolbar is hidden from assistive tech but stays visible and
-    // tappable, and a press is a touch. That hidden state is asserted separately.
-    const toolbar = async (name: string): Promise<void> => {
-      await fireEvent.press(screen.getByRole('button', { name, includeHiddenElements: true }));
-    };
-
     await mountReader();
 
-    await toolbar('Accessibility');
+    await pressMoreMenuItem('Accessibility');
     expect(screen.getByLabelText('High contrast: Off')).toBeTruthy();
 
-    await toolbar('Search this title');
+    await pressMoreMenuItem('Search this title');
     expect(screen.queryByLabelText('High contrast: Off')).toBeNull();
 
-    await toolbar('Accessibility');
+    await pressMoreMenuItem('Accessibility');
     expect(screen.queryByLabelText('Close search')).toBeNull();
     expect(screen.getByLabelText('High contrast: Off')).toBeTruthy();
 
-    await toolbar('Bookmarks');
+    await pressMoreMenuItem('Bookmarks');
     expect(screen.queryByLabelText('High contrast: Off')).toBeNull();
     expect(screen.getByLabelText('Close bookmarks')).toBeTruthy();
   });
 
   it('shows the Dyslexia Font row for an EPUB', async () => {
     await mountReader();
-    await fireEvent.press(screen.getByLabelText('Accessibility'));
+    await pressMoreMenuItem('Accessibility');
 
     expect(screen.getByLabelText('Dyslexia font: Off')).toBeTruthy();
   });
@@ -1478,7 +1405,7 @@ describe('the merged accessibility dropdown', () => {
   it('passes the format through, so a PDF loses the row it cannot honour', async () => {
     jest.mocked(prepareBook).mockResolvedValue('PDF' as ContentFormat);
     await mountReader();
-    await fireEvent.press(screen.getByLabelText('Accessibility'));
+    await pressMoreMenuItem('Accessibility');
 
     expect(screen.queryByLabelText(/Dyslexia font/)).toBeNull();
     // The other two apply to every format, which is why the ENTRY POINT is not format-gated.
@@ -1487,7 +1414,7 @@ describe('the merged accessibility dropdown', () => {
 
   it('renders "Accessibility information" as a plain button, not a toggle, inside the dropdown', async () => {
     await mountReader();
-    await fireEvent.press(screen.getByLabelText('Accessibility'));
+    await pressMoreMenuItem('Accessibility');
 
     const infoButton = screen.getByLabelText('Accessibility information');
     expect(infoButton.props.accessibilityState?.selected).toBeUndefined();
@@ -1497,7 +1424,7 @@ describe('the merged accessibility dropdown', () => {
     const onOpenAccessibilityInfo = jest.fn();
     await mountReader({ onOpenAccessibilityInfo });
 
-    await fireEvent.press(screen.getByLabelText('Accessibility'));
+    await pressMoreMenuItem('Accessibility');
     await fireEvent.press(screen.getByLabelText('Accessibility information'));
 
     expect(onOpenAccessibilityInfo).toHaveBeenCalledTimes(1);
@@ -1732,6 +1659,7 @@ describe('ReaderScreen Contents panel', () => {
 
   it('keeps the Contents button disabled until a TOC arrives', async () => {
     await mountReader();
+    await openMoreMenuOnly();
 
     // A book with no navigation document is legitimate; the panel must not be
     // openable onto an empty list.
@@ -1745,6 +1673,7 @@ describe('ReaderScreen Contents panel', () => {
     // `disabled: true` is what makes a screen reader offer "collapsed, expandable" for a button
     // that will never expand. Each state is the whole truth in its own case.
     await mountReader();
+    await openMoreMenuOnly();
 
     // `undefined`, not `false`. Pressable normalises its accessibilityState so every key is
     // present, so the assertion is on the VALUE — undefined is what RN's bridge drops on the way
@@ -1755,15 +1684,19 @@ describe('ReaderScreen Contents panel', () => {
 
     await deliver({ type: 'toc', items: flatToc(3) });
 
+    await openMoreMenuOnly();
     expect(screen.getByRole('button', { name: 'Contents' }).props.accessibilityState).toMatchObject(
       { expanded: false },
     );
+    await fireEvent.press(screen.getByRole('button', { name: 'Contents' }));
 
-    await openContents();
-
-    expect(
-      screen.getByRole('button', { name: 'Close contents' }).props.accessibilityState,
-    ).toMatchObject({ expanded: true });
+    // The Contents row's own label never flips to "Close contents" (see that row's own comment in
+    // ReaderScreen.tsx), so `expanded` is read back off the SAME row once the menu is reopened —
+    // opening the menu again is inert with respect to panel state, it only makes the row queryable.
+    await openMoreMenuOnly();
+    expect(screen.getByRole('button', { name: 'Contents' }).props.accessibilityState).toMatchObject(
+      { expanded: true },
+    );
   });
 });
 
@@ -1784,12 +1717,7 @@ describe('ReaderScreen in-book search', () => {
   }
 
   async function openSearch(): Promise<void> {
-    // `includeHiddenElements`, same reasoning as `openContents`: with a panel already open the
-    // toolbar is hidden from assistive tech but remains visible and tappable, and a press is a
-    // touch. The hidden state itself is asserted separately.
-    await fireEvent.press(
-      screen.getByRole('button', { name: 'Search this title', includeHiddenElements: true }),
-    );
+    await pressMoreMenuItem('Search this title');
   }
 
   /** Type a term and press the panel's Search button. */
@@ -2528,7 +2456,7 @@ describe('ReaderScreen bookmarks panel', () => {
   });
 
   async function openBookmarks(): Promise<void> {
-    await fireEvent.press(screen.getByRole('button', { name: 'Bookmarks' }));
+    await pressMoreMenuItem('Bookmarks');
   }
 
   async function relocateCfi(cfi: string | null): Promise<void> {
@@ -2731,9 +2659,7 @@ describe('ReaderScreen bookmarks panel', () => {
     // Bookmarks' own "Bookmark this page" affordance is gone once Contents took over the panel.
     expect(screen.queryByRole('button', { name: 'Bookmark this page' })).toBeNull();
 
-    await fireEvent.press(
-      screen.getByRole('button', { name: 'Search this title', includeHiddenElements: true }),
-    );
+    await pressMoreMenuItem('Search this title');
     expect(screen.queryByTestId('reader-toc-list')).toBeNull();
   });
 
@@ -2927,10 +2853,13 @@ describe('ReaderScreen bookmarks panel', () => {
     });
   });
 
-  describe('the toolbar bookmark icon', () => {
+  describe('the Bookmarks row icon in the "⋯" menu', () => {
     // The corner badge that used to carry this signal is REMOVED (2026-09-16) — see
-    // READER_BOOKMARKS_WIRING.md item 7. The toolbar's own Bookmarks icon now carries it instead:
-    // filled, in the brand blue, exactly when `isCurrentPositionBookmarked` is true.
+    // READER_BOOKMARKS_WIRING.md item 7. It moved to the toolbar's own standalone Bookmarks button,
+    // then moved again with the rest of Phase 3's icon consolidation to this row inside the "⋯"
+    // menu — still filled, in the brand blue, exactly when `isCurrentPositionBookmarked` is true,
+    // just read off the row rather than off a permanently-visible button. Opening the menu is the
+    // trade-off Phase 3 makes for one consolidated entry point rather than four standing icons.
     //
     // RNTL v14 only renders host elements (no `UNSAFE_getByType`), and `name`/`color` never reach
     // the underlying `Text` node as their own props — Ionicons resolves `name` to a private-use-area
@@ -2942,16 +2871,17 @@ describe('ReaderScreen bookmarks panel', () => {
       return typeof glyph === 'number' ? String.fromCodePoint(glyph) : String(glyph);
     }
 
-    function bookmarksButton() {
-      return within(screen.getByRole('button', { name: 'Bookmarks' }));
+    function bookmarksRow() {
+      return within(screen.getByRole('button', { name: 'Bookmarks', includeHiddenElements: true }));
     }
 
-    it("is outline in white (the toolbar's own colour) when the current position is not bookmarked", async () => {
+    it("is outline (this row's default colour) when the current position is not bookmarked", async () => {
       await mountReader();
       await deliver({ type: 'rendered' });
+      await openMoreMenuOnly();
 
-      const icon = bookmarksButton().getByText(glyphFor('bookmark-outline'));
-      expect(StyleSheet.flatten(icon.props.style).color).toBe(color.white);
+      const icon = bookmarksRow().getByText(glyphFor('bookmark-outline'));
+      expect(StyleSheet.flatten(icon.props.style).color).toBe(color.textPrimary);
     });
 
     it('fills in, in blue, once the current position matches a stored bookmark', async () => {
@@ -2962,14 +2892,17 @@ describe('ReaderScreen bookmarks panel', () => {
       await mountReader();
       await deliver({ type: 'rendered' });
       await relocateCfi('epubcfi(/6/10)');
+      await openMoreMenuOnly();
 
-      const icon = bookmarksButton().getByText(glyphFor('bookmark'));
+      const icon = bookmarksRow().getByText(glyphFor('bookmark'));
       expect(StyleSheet.flatten(icon.props.style).color).toBe(color.primary);
     });
 
-    it('reverts to outline when a pulled change removes the matching bookmark, with no reopen', async () => {
+    it('reverts to outline when a pulled change removes the matching bookmark, with the menu already open', async () => {
       // Replaces the deleted badge's own version of this test — the reload path
-      // (`subscribeToBookmarkChanges`) is unchanged, only what renders off its result moved.
+      // (`subscribeToBookmarkChanges`) is unchanged, only what renders off its result moved. "With
+      // no reopen" now means: the menu was already open when the pulled change landed, and the
+      // mounted row updates live rather than needing the menu closed and reopened to pick it up.
       let pulledChangeListener: (() => void) | undefined;
       jest.mocked(subscribeToBookmarkChanges).mockImplementation((listener) => {
         pulledChangeListener = listener;
@@ -2985,8 +2918,9 @@ describe('ReaderScreen bookmarks panel', () => {
       await mountReader();
       await deliver({ type: 'rendered' });
       await relocateCfi('epubcfi(/6/10)');
+      await openMoreMenuOnly();
 
-      expect(bookmarksButton().getByText(glyphFor('bookmark'))).toBeTruthy();
+      expect(bookmarksRow().getByText(glyphFor('bookmark'))).toBeTruthy();
 
       jest.mocked(loadBookmarks).mockResolvedValueOnce({ bookmarks: [], skippedIds: [] });
       await act(async () => {
@@ -2994,7 +2928,7 @@ describe('ReaderScreen bookmarks panel', () => {
         await Promise.resolve();
       });
 
-      expect(bookmarksButton().getByText(glyphFor('bookmark-outline'))).toBeTruthy();
+      expect(bookmarksRow().getByText(glyphFor('bookmark-outline'))).toBeTruthy();
 
       jest.mocked(subscribeToBookmarkChanges).mockReset().mockReturnValue(() => {});
     });
@@ -3041,8 +2975,11 @@ describe('TTS is driven by the preference, not by a button in the reader', () =>
     });
   }
 
+  // No more Prev/Next buttons to key off (removed 2026-09-21) — the bottom bar is now PDF-only
+  // and keyed on real page data (`reader-controls`, only rendered once a page `relocated` has
+  // arrived), so this checks the bar's own presence instead of a button inside it.
   function navRowShowing(): boolean {
-    return screen.queryByRole('button', { name: 'Next page' }) !== null;
+    return screen.queryByTestId('reader-controls') !== null;
   }
 
   /** The `requestId` the provider just put on the wire, read back out of the injected script. */
@@ -3105,12 +3042,10 @@ describe('TTS is driven by the preference, not by a button in the reader', () =>
     await reportReady();
 
     expect(screen.queryByTestId('tts-speed-row')).toBeNull();
-    expect(navRowShowing()).toBe(true);
 
     await setTtsPref(true);
 
     expect(screen.getByTestId('tts-speed-row')).toBeTruthy();
-    expect(navRowShowing()).toBe(false);
   });
 
   it('wires the REAL EPUB provider, so Play goes out over the bridge as requestTtsSentence', async () => {
@@ -3142,7 +3077,7 @@ describe('TTS is driven by the preference, not by a button in the reader', () =>
     expect(screen.queryByRole('button', { name: 'Listen to this book' })).toBeNull();
   });
 
-  it('takes the transport away and restores the navigation row when the preference goes off', async () => {
+  it('takes the transport away when the preference goes off', async () => {
     await mountReader();
     await reportReady();
     await setTtsPref(true);
@@ -3151,16 +3086,24 @@ describe('TTS is driven by the preference, not by a button in the reader', () =>
     await setTtsPref(false);
 
     expect(screen.queryByTestId('tts-speed-row')).toBeNull();
-    expect(navRowShowing()).toBe(true);
   });
 
-  it('never mounts the transport for a PDF, however the preference is set', async () => {
+  it('never mounts the transport for a PDF, however the preference is set — and leaves its own controls bar alone either way', async () => {
     // The seam is CFI-based; a PDF has no CFI to segment against.
     jest.mocked(prepareBook).mockResolvedValue('PDF');
     jest.mocked(getBookBase64).mockResolvedValue('JVBERi0xLjQK');
 
     await mountReader();
     await reportReady();
+    // Gives the PDF-only controls bar (`reader-controls`) real page data to show — without a
+    // `relocated` message it doesn't render at all (see that bar's own comment in
+    // ReaderScreen.tsx), which would make the assertion below true for the wrong reason.
+    await deliver({
+      type: 'relocated',
+      position: { kind: 'page', page: 1, pageCount: 10 },
+      atStart: true,
+      atEnd: false,
+    });
     await setTtsPref(true);
 
     expect(screen.queryByTestId('tts-speed-row')).toBeNull();
@@ -3364,12 +3307,10 @@ describe('screen-reader focus order', () => {
     focusOnMock.mockClear();
   });
 
-  // Local copies: the search block's own `openSearch`/`runSearch`/`epubHit` are scoped to that
+  // Local copy: the search block's own `openSearch`/`runSearch`/`epubHit` are scoped to that
   // describe. Kept minimal — this block cares about focus and reachability, not about search.
   async function openSearchPanel(): Promise<void> {
-    await fireEvent.press(
-      screen.getByRole('button', { name: 'Search this title', includeHiddenElements: true }),
-    );
+    await pressMoreMenuItem('Search this title');
   }
 
   function oneHit(): SearchHit {
@@ -3395,14 +3336,21 @@ describe('screen-reader focus order', () => {
 
   describe('toggle buttons report expanded state', () => {
     it('Search reports collapsed, then expanded, then collapsed again', async () => {
+      // The row only exists while the "⋯" menu is open, so each check reopens the menu fresh —
+      // opening it is inert with respect to panel state, so this observes state, it does not reset it.
       await mountReader();
       const search = (): ReturnType<typeof screen.getByRole> =>
         screen.getByRole('button', { name: 'Search this title', includeHiddenElements: true });
 
+      await openMoreMenuOnly();
       expect(search().props.accessibilityState).toMatchObject({ expanded: false });
-      await openSearchPanel();
+      await fireEvent.press(search());
+
+      await openMoreMenuOnly();
       expect(search().props.accessibilityState).toMatchObject({ expanded: true });
       await fireEvent.press(screen.getByRole('button', { name: 'Close search' }));
+
+      await openMoreMenuOnly();
       expect(search().props.accessibilityState).toMatchObject({ expanded: false });
     });
 
@@ -3411,8 +3359,11 @@ describe('screen-reader focus order', () => {
       const bookmarks = (): ReturnType<typeof screen.getByRole> =>
         screen.getByRole('button', { name: 'Bookmarks', includeHiddenElements: true });
 
+      await openMoreMenuOnly();
       expect(bookmarks().props.accessibilityState).toMatchObject({ expanded: false });
       await fireEvent.press(bookmarks());
+
+      await openMoreMenuOnly();
       expect(bookmarks().props.accessibilityState).toMatchObject({ expanded: true });
     });
   });
@@ -3448,11 +3399,11 @@ describe('screen-reader focus order', () => {
       });
     });
 
-    it('keeps the Contents button reachable while the TOC is open — it is the way out', async () => {
-      // THE ONE ASYMMETRY, and it is deliberate. Search and Bookmarks each close from a button
-      // inside their own panel, so the bottom row behind them is background. Contents does not: the
-      // button in that row IS its close affordance. Hiding the row with everything else left a
-      // screen-reader user inside the TOC with no reachable way out.
+    it('keeps a reachable way out of the TOC via its own Close button', async () => {
+      // Search and Bookmarks each close from a button inside their own panel; Contents now matches
+      // that shape (its own "Close contents" button in the panel header) rather than the entry
+      // point doubling as the close affordance — see the Contents row's own comment in
+      // ReaderScreen.tsx for why that asymmetry was removed.
       await mountReader();
       await reportReady();
       await deliver({ type: 'toc', items: flatToc(3) });
@@ -3461,13 +3412,13 @@ describe('screen-reader focus order', () => {
       expect(screen.getByRole('button', { name: 'Close contents' })).toBeTruthy();
     });
 
-    it('hides the bottom row behind Search, which carries its own close', async () => {
+    it('hides the "⋯" toolbar behind Search, which carries its own close', async () => {
       await mountReader();
       await reportReady();
       await deliver({ type: 'toc', items: flatToc(3) });
       await openSearchPanel();
 
-      expect(screen.queryByRole('button', { name: 'Contents' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Menu' })).toBeNull();
       expect(screen.getByRole('button', { name: 'Close search' })).toBeTruthy();
     });
 
@@ -3494,9 +3445,10 @@ describe('screen-reader focus order', () => {
     // handed, and that is enough to pin the two decisions this code actually makes: the panel's
     // entry target is not the button focus is restored to, and it is stable across reopens.
 
-    // Not `openContents()` again: it is the same Pressable, but its accessible name flips to
-    // "Close contents" while the panel is open (so a screen reader announces what the press will
-    // actually do), and the shared helper queries by the open-state name.
+    // Not `openContents()` again: that helper opens the "⋯" menu and presses the Contents row,
+    // which only ever opens the panel now (see that row's own comment in ReaderScreen.tsx). This
+    // presses the panel's own dedicated "Close contents" button instead — a different, always
+    // directly-queryable Pressable, not a re-press of the row that opened it.
     async function closeContents(): Promise<void> {
       await fireEvent.press(
         screen.getByRole('button', { name: 'Close contents', includeHiddenElements: true }),
@@ -3536,23 +3488,28 @@ describe('screen-reader focus order', () => {
       await deliver({ type: 'toc', items: flatToc(40) });
 
       await openContents();
-      await closeContents(); // the toggle's own close — focus is already on it, so it moves nothing
+      await closeContents(); // the panel's own dedicated close button — restores focus, see below
       await openContents();
 
-      expect(focusOnMock).toHaveBeenCalledTimes(2);
-      expect(focusOnMock.mock.calls[0][0]).toBe(focusOnMock.mock.calls[1][0]);
+      // Three calls, not two: entry (open), restore (close), entry (reopen). Only the two ENTRY
+      // calls are compared here — the middle, restore, call is `closeContents`'s own concern.
+      expect(focusOnMock).toHaveBeenCalledTimes(3);
+      expect(focusOnMock.mock.calls[0][0]).toBe(focusOnMock.mock.calls[2][0]);
     });
 
-    it('does not move focus when the panel is closed from the Contents toggle', async () => {
+    it('moves focus back to the "⋯" trigger when the panel is closed from its own Close button', async () => {
+      // Contents now closes the same way Search/Bookmarks do — a dedicated close button inside the
+      // panel, not a re-press of the row that opened it — so explicit close restores focus here too,
+      // matching "returns focus to the Search button when the panel is closed explicitly" below.
       await mountReader();
       await reportReady();
       await deliver({ type: 'toc', items: flatToc(3) });
       await openContents();
       focusOnMock.mockClear();
 
-      await closeContents(); // same button, now labelled "Close contents" — this is the close
+      await closeContents();
 
-      expect(focusOnMock).not.toHaveBeenCalled();
+      expect(focusOnMock).toHaveBeenCalledTimes(1);
     });
 
     it('does not re-enter when a fresh outline lands while the panel is open', async () => {
@@ -3629,9 +3586,7 @@ describe('screen-reader focus order', () => {
       await openContents();
       focusOnMock.mockClear();
 
-      await fireEvent.press(
-        screen.getByRole('button', { name: 'Bookmarks', includeHiddenElements: true }),
-      );
+      await pressMoreMenuItem('Bookmarks');
 
       expect(focusOnMock).not.toHaveBeenCalled();
     });
@@ -3665,7 +3620,7 @@ describe('screen-reader focus order', () => {
 
       // Not the same ref Search's own explicit-close restores to.
       focusOnMock.mockClear();
-      await fireEvent.press(screen.getByRole('button', { name: 'Search this title' }));
+      await pressMoreMenuItem('Search this title');
       await fireEvent.press(screen.getByRole('button', { name: 'Close search' }));
       expect(focusOnMock.mock.calls[0][0]).not.toBe(matchBarRef);
     });
@@ -4079,7 +4034,7 @@ describe('a rejected annotation call is contained, not swallowed', () => {
     jest.mocked(loadBookmarks).mockRejectedValue(REJECTION);
     await openBook();
 
-    await fireEvent.press(screen.getByRole('button', { name: 'Bookmarks' }));
+    await pressMoreMenuItem('Bookmarks');
 
     expect(screen.queryByText('Loading bookmarks…')).toBeNull();
     expect(alert).not.toHaveBeenCalled();
@@ -4098,7 +4053,7 @@ describe('a rejected annotation call is contained, not swallowed', () => {
       atStart: true,
       atEnd: false,
     });
-    await fireEvent.press(screen.getByRole('button', { name: 'Bookmarks' }));
+    await pressMoreMenuItem('Bookmarks');
 
     await fireEvent.press(screen.getByRole('button', { name: 'Bookmark this page' }));
 
@@ -4145,7 +4100,7 @@ describe('a rejected annotation call is contained, not swallowed', () => {
       atStart: false,
       atEnd: false,
     });
-    await fireEvent.press(screen.getByRole('button', { name: 'Bookmarks' }));
+    await pressMoreMenuItem('Bookmarks');
 
     await fireEvent.press(screen.getByRole('button', { name: 'Bookmark this page' }));
 
@@ -4191,7 +4146,7 @@ describe('a rejected annotation call is contained, not swallowed', () => {
     });
     jest.mocked(removeBookmark).mockRejectedValue(REJECTION);
     await openBook();
-    await fireEvent.press(screen.getByRole('button', { name: 'Bookmarks' }));
+    await pressMoreMenuItem('Bookmarks');
 
     await fireEvent.press(screen.getByRole('button', { name: 'Delete bookmark: To be deleted' }));
 
@@ -4218,7 +4173,7 @@ describe('a rejected annotation call is contained, not swallowed', () => {
     });
     jest.mocked(renameBookmark).mockRejectedValue(REJECTION);
     await openBook();
-    await fireEvent.press(screen.getByRole('button', { name: 'Bookmarks' }));
+    await pressMoreMenuItem('Bookmarks');
 
     await fireEvent.press(screen.getByRole('button', { name: 'Edit bookmark: Old name' }));
     await fireEvent.changeText(
@@ -4732,8 +4687,14 @@ describe('the initial-target flush verifies and resends on a mismatch', () => {
     await deliver({ type: 'relocated', position: { kind: 'page', page: 1, pageCount: 20 } });
     const sendsBeforeUserAction = goToCallCount({ kind: 'page', page: 5 });
 
-    // The reader taps Next themselves — a deliberate navigation, not a race to correct.
-    await fireEvent.press(screen.getByRole('button', { name: 'Next page' }));
+    // The reader jumps to a page themselves — a deliberate navigation, not a race to correct.
+    // Page-jump submission, not a Prev/Next button press (removed 2026-09-21, along with those
+    // buttons) — `submitPageJump` clears `pendingInitialVerifyRef` the same way the old button
+    // presses did (see its own "see `goTo`'s own note on why" comment in ReaderScreen.tsx), so it
+    // is an equally valid stand-in for "the reader took over navigation" here.
+    await fireEvent.press(screen.getByTestId('reader-page-indicator'));
+    await fireEvent.changeText(screen.getByTestId('reader-page-jump'), '2');
+    await fireEvent(screen.getByTestId('reader-page-jump'), 'submitEditing');
     await deliver({ type: 'relocated', position: { kind: 'page', page: 2, pageCount: 20 } });
 
     // No further attempt to correct back to page 5 — the reader's own navigation wins.
@@ -4741,9 +4702,9 @@ describe('the initial-target flush verifies and resends on a mismatch', () => {
   });
 
   // Mirrors the test above, but through TalkBack's native page-turn action
-  // (TALKBACK_GESTURE_FIX_PROPOSAL.md) instead of the toolbar Prev/Next Pressables — pinning that
-  // ReaderScreen's onPageTurnRequested wiring clears pendingInitialVerifyRef exactly like the
-  // toolbar buttons do, not a partial copy that skips the race-guard half of the effect.
+  // (TALKBACK_GESTURE_FIX_PROPOSAL.md) instead of a page-jump submission — pinning that
+  // ReaderScreen's onPageTurnRequested wiring clears pendingInitialVerifyRef exactly like that
+  // does, not a partial copy that skips the race-guard half of the effect.
   it('a TalkBack page-turn action also stops the resend loop, same as the toolbar buttons', async () => {
     await render(
       <ReaderScreen bookId="test-book-verify-talkback-pageturn" initialTarget={{ kind: 'page', page: 5 }} />,

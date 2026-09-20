@@ -66,12 +66,17 @@ matching `SearchPanel.tsx`'s split) plus the wiring in `ReaderScreen.tsx`:
 7. **The bookmarked-page corner badge is REMOVED (2026-09-16), not just restyled.** It used to be a
    small gold circle over the viewer, driven by `isCurrentPositionBookmarked` (a `useMemo` over
    `bookmarks` and `position`, no store read of its own), with a "Page Bookmarked" tooltip on
-   long-press/hover. That signal now lives on the toolbar's own Bookmarks button instead: its icon is
-   `bookmark` (filled, `color.primary`) when `isCurrentPositionBookmarked` is true and
-   `bookmark-outline` otherwise, so "you are somewhere you bookmarked" is read off the control that
-   opens `BookmarksPanel` rather than off a second, non-interactive element. `isCurrentPositionBookmarked`
-   itself is unchanged — PDF still matches by PAGE (the same granularity `addCurrentPdfBookmark` writes
-   at), EPUB still by exact CFI. The corner badge's own dedicated test block is deleted along with it,
+   long-press/hover. That signal moved to the toolbar's own standalone Bookmarks button first, and
+   then again (2026-09-20, Phase 3 of the reader chrome redesign — `ReaderScreen.tsx`'s Search/
+   Bookmarks/Accessibility/Contents toolbar buttons consolidated into one "⋯" menu) to the Bookmarks
+   ROW inside that menu: its icon is `bookmark` (filled, `color.primary`) when
+   `isCurrentPositionBookmarked` is true and `bookmark-outline` otherwise, so "you are somewhere you
+   bookmarked" is still read off the control that opens `BookmarksPanel` rather than off a second,
+   non-interactive element — it now just costs one extra tap (opening the menu) to see it, the
+   deliberate trade-off of one consolidated entry point over four permanently-visible icons.
+   `isCurrentPositionBookmarked` itself is unchanged — PDF still matches by PAGE (the same
+   granularity `addCurrentPdfBookmark` writes at), EPUB still by exact CFI. The corner badge's own
+   dedicated test block is deleted along with it,
    not left pinning removed behaviour.
 8. **Cross-book filtering — the real per-book scoping does it now; Reader's format filter is a
    guard.** Every call above is scoped to `bookId`, so the panel receives only the open book's rows

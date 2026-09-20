@@ -43,7 +43,8 @@ import {
 } from 'react';
 
 import { useAudioPlayerStatus } from 'expo-audio';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
@@ -73,6 +74,10 @@ const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
 /** End-of-track tolerance (seconds). If the player is within this threshold of duration when play
  * is pressed, restart from the beginning instead of no-oping. */
 const TRACK_END_EPSILON_SECONDS = 0.5;
+// Matches ItemDetailScreen's own COVER_WIDTH:COVER_HEIGHT ratio (6:9 = 2:3) — an ordinary
+// portrait book-cover shape, not a square album tile. The absolute size is this screen's own
+// (see coverWidth/coverHeight's own comment) — only the shape is shared.
+const COVER_ASPECT_RATIO = 1.5;
 
 /**
  * The one thing a caller may need to reach into this screen for from the outside: checking whether
@@ -210,6 +215,19 @@ function AudioPlayerScreenComponent(
   // full screen — this screen's own top bar below has to account for the top safe area itself, the
   // same way AppHeader always did on its behalf. Matches ReaderScreen's identical reasoning.
   const insets = useSafeAreaInsets();
+
+  // Same 2:3 portrait shape ItemDetailScreen's own book jacket uses, but sized as a real hero
+  // (most of the screen's own width, Spotify's own scale) rather than that screen's small fixed
+  // constant — a cover sized to match ItemDetailScreen exactly read as mostly empty navy space on
+  // this screen's own dark, full-bleed background. `- 40` accounts for `container`'s own
+  // `paddingHorizontal: 20` — this is the FULL inner content width, not a further-inset fraction
+  // of it. Also capped by available height, so a short screen never pushes the transport controls
+  // below the fold.
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const coverWidthByWindow = windowWidth - 40;
+  const coverWidthByHeight = (windowHeight * 0.5) / COVER_ASPECT_RATIO;
+  const coverWidth = Math.min(coverWidthByWindow, coverWidthByHeight);
+  const coverHeight = coverWidth * COVER_ASPECT_RATIO;
 
   const [uri, setUri] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -518,12 +536,13 @@ function AudioPlayerScreenComponent(
   const prevDisabled = !hasPrevious && status.currentTime <= 3.0;
 
   return (
-    <View style={styles.container}>
-      {/* Top row — back + a secondary label on the left, icon-first actions on the right (Spotify's
-          own "now playing" bar shape). Track title moves below the cover art instead of living up
-          here. `paddingTop` is applied inline since a static StyleSheet value can't see the safe
-          area — mirrors ReaderScreen's own header bar, so the two reading surfaces read as one
-          consistent product. */}
+    <View style={[styles.container, { paddingBottom: insets.bottom + space.xl }]}>
+      {/* Fixed top zone — back + a plain "now playing" utility label, icon actions on the right.
+          The book's own name lives with its cover below, not up here — Spotify keeps title and
+          art as one visual group, and splitting them apart (an earlier pass tried it) reads as
+          two separate things rather than one "now playing" block. `paddingTop` is applied inline
+          since a static StyleSheet value can't see the safe area — mirrors ReaderScreen's own
+          header bar. */}
       <View style={[styles.topBar, { paddingTop: insets.top + space.xs }]}>
         <View style={styles.topBarLeft}>
           {onBack && (
@@ -572,27 +591,41 @@ function AudioPlayerScreenComponent(
         </View>
       </View>
 
-      {/* Hero cover art — the thing this whole redesign is for. Same "missing is not an
-          error" placeholder shape ContentCard/JournalScreen already use for a book cover. */}
+      {/* Cover art and title as ONE group, Spotify's own shape — not split across two areas of
+          the screen. `flex: 1` on this wrapper (not just the image) is what centers the whole
+          group in the space left between the fixed top bar and the transport block below, and
+          what keeps that transport block pinned near the bottom regardless of device height. The
+          art itself is sized to fill most of the available width (see coverWidth/coverHeight's
+          own comment) — a small, item-detail-sized cover here read as mostly empty navy space. */}
       <View style={styles.coverWrap}>
         {coverUrl !== undefined && !coverFailed ? (
           <Image
-            source={{ uri: coverUrl }}
-            style={styles.cover}
-            resizeMode="cover"
+            // See ContentCard.tsx's/ItemDetailScreen.tsx's own note — the backend re-signs this
+            // URL's querystring on every fetch, so the cache key must ignore it.
+            source={{ uri: coverUrl, cacheKey: coverUrl.split('?')[0] }}
+            style={{ width: coverWidth, height: coverHeight, borderRadius: radius.sheet }}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            transition={200}
             accessibilityLabel={`${title} cover`}
             onError={() => setCoverFailed(true)}
           />
         ) : (
-          <View style={[styles.cover, styles.coverPlaceholder]} accessibilityLabel={`${title} cover`}>
+          <View
+            style={[
+              styles.coverPlaceholder,
+              { width: coverWidth, height: coverHeight, borderRadius: radius.sheet },
+            ]}
+            accessibilityLabel={`${title} cover`}
+          >
             <Ionicons name="musical-notes" size={64} color="rgba(255, 255, 255, 0.35)" />
           </View>
         )}
-      </View>
 
-      <Text style={styles.title} numberOfLines={2}>
-        {title}
-      </Text>
+        <Text style={styles.title} numberOfLines={2}>
+          {title}
+        </Text>
+      </View>
 
       <Scrubber
         positionSeconds={status.currentTime}
@@ -720,8 +753,6 @@ function AudioPlayerScreenComponent(
 export const AudioPlayerScreen = forwardRef(AudioPlayerScreenComponent);
 AudioPlayerScreen.displayName = 'AudioPlayerScreen';
 
-const ART_SIZE = 280;
-
 const styles = StyleSheet.create({
   // Error/lock/loading states stay on the ordinary light surface — they're terminal states
   // distinct from "now playing", same treatment ReaderScreen gives its own error views.
@@ -733,11 +764,15 @@ const styles = StyleSheet.create({
   // The "now playing" surface itself — dark navy, same identity TopAppBar/BootSplash already
   // give the rest of the app's chrome, so this reads as a deliberate destination, not a stray
   // light-themed screen wedged behind a dark tab bar.
+  // `paddingBottom` is applied inline (insets.bottom + space.xl) — see this View's own JSX
+  // usage. Deliberately more than the safe-area inset alone: a real gap between the transport
+  // controls and the bottom edge, not just clearance for the home indicator, is what pulls the
+  // cover+title group (coverWrap's own flex:1 centers within whatever space is left) and the
+  // controls block both up off the very bottom of the screen.
   container: {
     flex: 1,
     backgroundColor: color.navy,
     paddingHorizontal: 20,
-    paddingBottom: 24,
     gap: space.lg,
   },
   // `paddingTop` is applied inline (insets.top + space.xs) — see this View's own JSX comment.
@@ -746,9 +781,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  topBarLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  topBarLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: space.sm },
   eyebrow: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1.5,
     color: 'rgba(255, 255, 255, 0.6)',
@@ -767,23 +802,24 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.85)',
   },
 
-  coverWrap: { alignItems: 'center', marginTop: space.sm },
-  cover: {
-    width: ART_SIZE,
-    height: ART_SIZE,
-    borderRadius: radius.card,
-  },
+  // `flex: 1` is the load-bearing part — see this View's own JSX comment: it is what centres the
+  // cover+title group in whatever space is actually left, and what keeps the transport block
+  // pinned near the bottom of the screen instead of drifting up on a tall device or overflowing
+  // on a short one. Cover width/height come from the responsive coverWidth/coverHeight above.
+  coverWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.md },
   coverPlaceholder: {
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-
+  // Directly under the cover, as one group with it (see coverWrap's own JSX comment) — not a
+  // fixed "top name" separate from the art.
   title: {
     fontSize: 20,
     fontWeight: '700',
     color: color.white,
     textAlign: 'center',
+    paddingHorizontal: space.md,
   },
 
   scrubberRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
