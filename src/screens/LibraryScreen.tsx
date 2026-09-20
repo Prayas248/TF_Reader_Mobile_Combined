@@ -167,6 +167,7 @@ import { type DownloadRecord, useDownloadStore } from '@store/downloadStore';
 import { useExpiredDownloadsStore } from '@store/expiredDownloadsStore';
 import { useExpiredLoansStore } from '@store/expiredLoansStore';
 import { useLibraryStore } from '@store/libraryStore';
+import { useOfferStore } from '@store/offerStore';
 import { color, radius, space, type } from '@theme/tokens';
 
 import {
@@ -540,7 +541,12 @@ export default function LibraryScreen({ navigation }: LibraryScreenProps) {
         await openBook(bookId, format);
         setOpenNotice(undefined);
         if (format === 'AUDIO') {
-          navigation.navigate('AudioPlayer', { bookId, title: titles.get(bookmark.bookId)?.title ?? bookmark.bookId });
+          const summary = titles.get(bookmark.bookId);
+          navigation.navigate('AudioPlayer', {
+            bookId,
+            title: summary?.title ?? bookmark.bookId,
+            coverUrl: summary?.coverUrl,
+          });
         } else {
           const target = bookmarkTarget(bookmark.locator);
           navigation.navigate('Reader', {
@@ -569,6 +575,12 @@ export default function LibraryScreen({ navigation }: LibraryScreenProps) {
       setPendingHoldAction({ holdId, action: 'accept' });
       getLicenceSource()
         .acceptOffer(holdId)
+        // PREVIOUSLY MISSING: nothing here ever cleared offerStore, so QueueNotificationHost's
+        // global banner kept offering a copy this exact call just consumed — a ghost offer that
+        // survived until its own expiry, tapping it would then fail against a hold that no
+        // longer exists. QueueNotificationHost.tsx's own accept/reject already does this; this
+        // screen reaches the same LicenceSource action and needs the same cleanup.
+        .then(() => useOfferStore.getState().clear())
         .catch(() => setActionNotice('Couldn’t accept that offer. Pull to refresh and try again.'))
         .then(() => refresh())
         .catch(() => {})
@@ -583,6 +595,7 @@ export default function LibraryScreen({ navigation }: LibraryScreenProps) {
       setPendingHoldAction({ holdId, action: 'reject' });
       getLicenceSource()
         .cancelHold(holdId)
+        .then(() => useOfferStore.getState().clear())
         .catch(() => setActionNotice('Couldn’t decline that offer. Pull to refresh and try again.'))
         .then(() => refresh())
         .catch(() => {})

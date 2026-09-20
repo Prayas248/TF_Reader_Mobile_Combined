@@ -165,7 +165,14 @@ export default function JournalScreen({ route }: Props) {
           cachePolicy="memory-disk"
           transition={200}
           accessibilityLabel={`${title} cover`}
-          onError={() => setCoverFailed(true)}
+          onError={(event) => {
+            // Previously silent — setCoverFailed(true) alone gives no way to tell "this URL
+            // is unreachable" apart from "the backend's presigned URL 403'd because the cover
+            // was never actually uploaded to the bucket" apart from "malformed URL". All three
+            // produce the identical placeholder with nothing in between to diagnose from.
+            console.warn('[JournalScreen] cover image failed to load', resolvedCoverUrl, event.error);
+            setCoverFailed(true);
+          }}
         />
       )}
     </View>

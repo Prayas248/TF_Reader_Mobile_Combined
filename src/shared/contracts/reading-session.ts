@@ -164,8 +164,23 @@ export interface ReadingSessionResponse {
    * DOWNLOAD-intent reading session regardless of what the UI showed. Present on the real
    * backend's response, same field the old `Loan.canPersist` carried. */
   canPersist?: boolean;
-  /** Present only for a copy-limited (ELITE) title with no copy free right now. */
+  /** Present only for a copy-limited (ELITE) title with no copy free right now.
+   * UNCONFIRMED against the real backend — no "Confirmed against tf_reader_backend_temp" note
+   * ever existed for this field, unlike its siblings above, and it turns out not to match: the
+   * real `ReadBrokerService.queuedResponse()` (reading/service/ReadBrokerService.java) sends no
+   * nested queue object at all. It sends `holdCreatedAt` (below) instead — plain, flat, on the
+   * response itself. Kept here rather than deleted only because nothing currently reads it and
+   * removing an exported field is the Contracts Gate's call, not a drive-by decision; treat any
+   * code that reads `.queue` as reading a field the server never populates. */
   queue?: QueueState;
+  /** Present, and ONLY present, for a copy-limited (ELITE) title with no copy free right now —
+   * the reader was placed in the wait queue as part of THIS SAME call rather than refused
+   * outright. `content`/`index`/`encryption`/`licenceId` are all absent on this response: there
+   * is nothing to read yet, only a place in line. Confirmed directly against
+   * `ReadBrokerService.queuedResponse()` on 2026-09-20 — this is the field that field actually
+   * sends; `queue` above is not. A caller that finds `content` missing must check this before
+   * treating the response as malformed. */
+  holdCreatedAt?: string;
   /** @deprecated Never sent by the real backend (confirmed) — it sends `licenceId` (above)
    * instead. Kept only because the published flambeau spec this file originally modeled names it;
    * nothing in this app reads it. */
@@ -283,7 +298,11 @@ export type FlambeauErrorCode =
   | 'NO_COPIES_AVAILABLE'
   | 'NO_ACTIVE_LOAN'
   | 'LOAN_NOT_ACTIVE'
-  | 'OFFER_EXPIRED';
+  | 'OFFER_EXPIRED'
+  // A Redis/Mongo blip on the backend (GlobalExceptionHandler's DataAccessException handler,
+  // added 2026-09-20) — confirmed against the real backend, additive per this file's own freeze
+  // rules (no member removed or renamed).
+  | 'SERVICE_UNAVAILABLE';
 
 /** One envelope for the whole backend, field-for-field wokay's `Error`. `message` is for a
  * human — switch on `code`, never on `message`. */

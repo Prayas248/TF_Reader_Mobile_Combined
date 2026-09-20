@@ -1,11 +1,12 @@
 {
   "expo": {
-    "name": "TF Reader",
+    "name": "Nexus",
     "slug": "tf-reader-mobile",
     "version": "0.1.0",
     "orientation": "portrait",
     "scheme": "tfreader",
     "userInterfaceStyle": "automatic",
+    "icon": "./assets/nexus-3.png",
     "assetBundlePatterns": [
       "assets/**/*"
     ],
@@ -15,6 +16,10 @@
     },
     "android": {
       "package": "com.taylorandfrancis.tfreader.dev",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/nexus-3.png",
+        "backgroundColor": "#002244"
+      },
       "permissions": [
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -25,6 +30,15 @@
     "plugins": [
       "expo-dev-client",
       "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/nexus-3.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#002244"
+        }
+      ],
       [
         "expo-speech-recognition",
         {

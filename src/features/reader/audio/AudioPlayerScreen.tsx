@@ -43,7 +43,8 @@ import {
 } from 'react';
 
 import { useAudioPlayerStatus } from 'expo-audio';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 
 import Loader from '@components/Loader';
 import { color, radius, space } from '@theme/tokens';
@@ -99,6 +100,9 @@ export interface AudioPlayerScreenProps {
    * instance; it relies on the remount instead. */
   bookId: BookId;
   title: string;
+  /** The book's cover image, for the hero art. Absent shows a plain placeholder — same
+   * "missing cover is not an error" treatment ItemDetailScreen/JournalScreen give a cover. */
+  coverUrl?: string;
   /** Seconds into the track to resume at, or undefined for "start from the top." Read once on
    * mount — see AudioPlayerRouteScreen.tsx for where this comes from. */
   initialPosition?: number;
@@ -180,7 +184,7 @@ function Scrubber({
 }
 
 function AudioPlayerScreenComponent(
-  { bookId, title, initialPosition, onPositionChange, onPositionCommit, onBeforePlay }: AudioPlayerScreenProps,
+  { bookId, title, coverUrl, initialPosition, onPositionChange, onPositionCommit, onBeforePlay }: AudioPlayerScreenProps,
   ref: React.ForwardedRef<AudioPlayerScreenHandle>,
 ): React.JSX.Element {
   const [uri, setUri] = useState<string | null>(null);
@@ -188,6 +192,7 @@ function AudioPlayerScreenComponent(
   const hasResumedRef = useRef(false);
   const [queueModalVisible, setQueueModalVisible] = useState(false);
   const [sleepTimerModalVisible, setSleepTimerModalVisible] = useState(false);
+  const [coverFailed, setCoverFailed] = useState(false);
 
   const hasNext = useAudioQueueStore((s) => s.hasNext());
   const hasPrevious = useAudioQueueStore((s) => s.hasPrevious());
@@ -471,42 +476,81 @@ function AudioPlayerScreenComponent(
   }
 
   if (!status.isLoaded) {
-    return <Loader title={`Loading ${title}…`} testID="audio-player-loading" />;
+    return (
+      <View style={styles.loadingScreen}>
+        <Loader title={`Loading ${title}…`} testID="audio-player-loading" />
+      </View>
+    );
   }
+
+  const playAccessibilityLabel = status.playing
+    ? 'Pause'
+    : playCheckPending
+      ? 'Checking progress'
+      : 'Play';
+  const prevDisabled = !hasPrevious && status.currentTime <= 3.0;
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title} numberOfLines={2}>
-          {title}
+      {/* Top row — secondary actions only, icon-first (Spotify's own "now playing" bar shape).
+          Track title moves below the cover art instead of living up here. */}
+      <View style={styles.topBar}>
+        <Text style={styles.eyebrow} numberOfLines={1}>
+          NOW PLAYING
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            sleepTimerPhase === 'running'
-              ? `Sleep timer, ${formatTime(sleepTimerRemainingSeconds)} remaining`
-              : 'Sleep timer'
-          }
-          onPress={() => setSleepTimerModalVisible(true)}
-          style={styles.queueButton}
-        >
-          <Text style={styles.queueButtonLabel}>
-            {sleepTimerPhase === 'running'
-              ? formatTime(sleepTimerRemainingSeconds)
-              : 'Sleep Timer'}
-          </Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Open queue, ${queueLength} track${queueLength === 1 ? '' : 's'}`}
-          onPress={() => setQueueModalVisible(true)}
-          style={styles.queueButton}
-        >
-          <Text style={styles.queueButtonLabel}>
-            Queue {queueLength > 0 ? `(${queueLength})` : ''}
-          </Text>
-        </Pressable>
+        <View style={styles.topBarActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              sleepTimerPhase === 'running'
+                ? `Sleep timer, ${formatTime(sleepTimerRemainingSeconds)} remaining`
+                : 'Sleep timer'
+            }
+            onPress={() => setSleepTimerModalVisible(true)}
+            style={styles.iconButton}
+          >
+            <Ionicons
+              name={sleepTimerPhase === 'running' ? 'moon' : 'moon-outline'}
+              size={20}
+              color={color.white}
+            />
+            {sleepTimerPhase === 'running' && (
+              <Text style={styles.iconButtonBadge}>{formatTime(sleepTimerRemainingSeconds)}</Text>
+            )}
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Open queue, ${queueLength} track${queueLength === 1 ? '' : 's'}`}
+            onPress={() => setQueueModalVisible(true)}
+            style={styles.iconButton}
+          >
+            <Ionicons name="list" size={22} color={color.white} />
+            {queueLength > 0 && <Text style={styles.iconButtonBadge}>{queueLength}</Text>}
+          </Pressable>
+        </View>
       </View>
+
+      {/* Hero cover art — the thing this whole redesign is for. Same "missing is not an
+          error" placeholder shape ContentCard/JournalScreen already use for a book cover. */}
+      <View style={styles.coverWrap}>
+        {coverUrl !== undefined && !coverFailed ? (
+          <Image
+            source={{ uri: coverUrl }}
+            style={styles.cover}
+            resizeMode="cover"
+            accessibilityLabel={`${title} cover`}
+            onError={() => setCoverFailed(true)}
+          />
+        ) : (
+          <View style={[styles.cover, styles.coverPlaceholder]} accessibilityLabel={`${title} cover`}>
+            <Ionicons name="musical-notes" size={64} color="rgba(255, 255, 255, 0.35)" />
+          </View>
+        )}
+      </View>
+
+      <Text style={styles.title} numberOfLines={2}>
+        {title}
+      </Text>
 
       <Scrubber
         positionSeconds={status.currentTime}
@@ -517,43 +561,36 @@ function AudioPlayerScreenComponent(
         }}
       />
 
+      {/* Transport — a large centered play/pause (Spotify's own hierarchy: the one action that
+          matters is the biggest thing on screen), ±15s flanking it, track-skip at the ends. */}
       <View style={styles.transportRow}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Previous track"
-          disabled={!hasPrevious && status.currentTime <= 3.0}
+          disabled={prevDisabled}
           onPress={() => void skipToPreviousTrack(status.currentTime)}
-          style={[
-            styles.transportButton,
-            styles.trackNavButton,
-            !hasPrevious && status.currentTime <= 3.0 && styles.transportButtonDisabled,
-          ]}
+          style={styles.trackNavButton}
         >
-          <Text
-            style={[
-              styles.transportButtonLabel,
-              styles.trackNavIcon,
-              !hasPrevious && status.currentTime <= 3.0 && styles.transportButtonLabelDisabled,
-            ]}
-          >
-            |◀◀
-          </Text>
+          <Ionicons
+            name="play-skip-back"
+            size={26}
+            color={prevDisabled ? 'rgba(255, 255, 255, 0.3)' : color.white}
+          />
         </Pressable>
 
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Skip back ${SKIP_SECONDS} seconds`}
           onPress={() => skip(-SKIP_SECONDS)}
-          style={styles.transportButton}
+          style={styles.skipButton}
         >
-          <Text style={styles.transportButtonLabel}>-{SKIP_SECONDS}s</Text>
+          <Text style={styles.skipButtonGlyph}>↺</Text>
+          <Text style={styles.skipButtonLabel}>{SKIP_SECONDS}</Text>
         </Pressable>
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={
-            status.playing ? 'Pause' : playCheckPending ? 'Checking progress' : 'Play'
-          }
+          accessibilityLabel={playAccessibilityLabel}
           disabled={playCheckPending}
           onPress={() => {
             if (status.playing) {
@@ -565,22 +602,26 @@ function AudioPlayerScreenComponent(
               void beginPlayback();
             }
           }}
-          style={[
-            styles.transportButton,
-            styles.playButton,
-            playCheckPending && styles.playButtonPending,
-          ]}
+          style={[styles.playButton, playCheckPending && styles.playButtonPending]}
         >
-          <Text style={styles.playButtonLabel}>{status.playing ? 'Pause' : 'Play'}</Text>
+          <Ionicons
+            name={status.playing ? 'pause' : 'play'}
+            size={34}
+            color={color.navy}
+            // Optically centers the play triangle, which is not visually centered in its own
+            // glyph box the way pause's two bars are.
+            style={!status.playing && styles.playGlyphNudge}
+          />
         </Pressable>
 
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Skip forward ${SKIP_SECONDS} seconds`}
           onPress={() => skip(SKIP_SECONDS)}
-          style={styles.transportButton}
+          style={styles.skipButton}
         >
-          <Text style={styles.transportButtonLabel}>+{SKIP_SECONDS}s</Text>
+          <Text style={styles.skipButtonLabel}>{SKIP_SECONDS}</Text>
+          <Text style={styles.skipButtonGlyph}>↻</Text>
         </Pressable>
 
         <Pressable
@@ -588,25 +629,19 @@ function AudioPlayerScreenComponent(
           accessibilityLabel="Next track"
           disabled={!hasNext}
           onPress={() => void skipToNextTrack()}
-          style={[
-            styles.transportButton,
-            styles.trackNavButton,
-            !hasNext && styles.transportButtonDisabled,
-          ]}
+          style={styles.trackNavButton}
         >
-          <Text
-            style={[
-              styles.transportButtonLabel,
-              styles.trackNavIcon,
-              !hasNext && styles.transportButtonLabelDisabled,
-            ]}
-          >
-            ▶▶|
-          </Text>
+          <Ionicons
+            name="play-skip-forward"
+            size={26}
+            color={hasNext ? color.white : 'rgba(255, 255, 255, 0.3)'}
+          />
         </Pressable>
       </View>
 
-      <View style={styles.rateRow}>
+      {/* Bottom options — playback speed. Sleep timer/queue already moved to the top bar, so
+          this row is the one thing left that genuinely belongs at the bottom. */}
+      <View style={styles.bottomRow}>
         {PLAYBACK_RATES.map((rate) => (
           <Pressable
             key={rate}

@@ -17,7 +17,9 @@
 // same seam those screens' own tests already use. `pollOfferChanges` below stays a
 // plain function taking a `LicenceSource`, so it needs none of that to be tested.
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import type { LicenceSource } from '@/licence';
+import { isLicenceFailure, LicenceError } from '@/licence/LicenceSource';
 import { getLicenceSource } from '@config/licence';
 import { useOfferStore } from '@store/offerStore';
 
@@ -48,7 +50,15 @@ export async function pollOfferChanges(
   return page.nextCursor;
 }
 
-/** Starts the 60-second poll for as long as the calling component is mounted. */
+/**
+ * Starts the 60-second poll for as long as the calling component is mounted.
+ *
+ * ALSO PULLS ON THE FOREGROUND EDGE, same shape as `ReaderRouteScreen.tsx`'s own
+ * AppState-driven sync poll, and for the same reason: `setInterval` is throttled/paused
+ * while the app is backgrounded, so without this, an offer promoted while the phone was
+ * in the reader's pocket sat undelivered for the ENTIRE background duration, not just up
+ * to 60s — the interval alone only ever closes the gap between two foreground ticks.
+ */
 export function useOfferPolling(): void {
   useEffect(() => {
     const source = getLicenceSource();
@@ -59,19 +69,87 @@ export function useOfferPolling(): void {
       let nextCursor: string;
       try {
         nextCursor = await pollOfferChanges(source, since);
-      } catch {
-        // A network hiccup is ordinary on mobile — leave `since` where it was and
-        // try again next tick rather than losing the reader's place in the feed.
+      } catch (err) {
+        // A network hiccup (NETWORK_UNAVAILABLE/TIMEOUT) is ordinary on mobile — leave
+        // `since` where it was and try again next tick rather than losing the reader's
+        // place in the feed. Silently.
+        //
+        // Anything else is not ordinary, and previously vanished into this same silent
+        // return — including normalizeLicence.ts's OWN deliberately loud
+        // `MALFORMED_RESPONSE` throw for a change-feed reason it doesn't recognise
+        // ("loud rather than dropped", per that file's comment). Swallowing it here made
+        // that throw pointless: `since` never advances past the bad page, so every future
+        // tick re-fetches the identical page and fails identically, forever, with nobody
+        // ever told. Not fixed by retrying differently — this needs a person, which is
+        // why it's logged rather than silently worked around.
+        //
+        // ALSO ORDINARY: REFUSED for any auth-related reason. QueueNotificationHost (this poll's
+        // only caller) mounts unconditionally at the app root (RootNavigator.tsx), alongside the
+        // signed-out StartupGate flow — so this fires on a fixed 60s cadence for every reader who
+        // simply hasn't signed in yet, or whose session lapsed. That is the normal, expected state
+        // of a large fraction of app launches, not a contract violation.
+        //
+        // THREE DISTINCT CODES, NOT ONE — a first pass here only listed UNAUTHENTICATED/
+        // TOKEN_EXPIRED and still logged loudly for every signed-out reader, because the backend's
+        // OWN ErrorCode enum (common/error/ErrorCode.java) has a THIRD, separate code —
+        // TOKEN_MISSING — specifically for "no bearer token was presented at all," which is
+        // exactly what a signed-out client sends (there is no token to attach). `errorCode` here
+        // is read as a raw wire string (ApiLicenceClient.ts's `refusal()`), not filtered through
+        // this app's own ErrorCode union, so a backend code this app has no UI copy for still
+        // compares correctly by name.
+        const AUTH_REFUSAL_CODES = new Set(['UNAUTHENTICATED', 'TOKEN_EXPIRED', 'TOKEN_MISSING']);
+        const isOrdinary =
+          isLicenceFailure(err) &&
+          (err.code === LicenceError.NETWORK_UNAVAILABLE ||
+            err.code === LicenceError.TIMEOUT ||
+            (err.code === LicenceError.REFUSED &&
+              err.errorCode !== undefined &&
+              AUTH_REFUSAL_CODES.has(err.errorCode)));
+        if (!isOrdinary) {
+          // errorCode logged explicitly, not just the LicenceFailure itself — its default
+          // console rendering (`[LicenceFailure: REFUSED]`) hides the one field that actually
+          // says why, which is exactly what made THIS gap take two rounds to pin down.
+          console.error(
+            '[offerPolling] unexpected failure reading the change feed — offers will stop updating until this is fixed:',
+            isLicenceFailure(err) ? { code: err.code, errorCode: err.errorCode } : err,
+          );
+        }
         return;
       }
       if (!stopped) since = nextCursor;
     }
 
+    let wasActive = AppState.currentState === 'active';
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const startInterval = () => {
+      if (interval !== null) return;
+      interval = setInterval(tick, POLL_INTERVAL_MS);
+    };
+    const stopInterval = () => {
+      if (interval === null) return;
+      clearInterval(interval);
+      interval = null;
+    };
+
     tick();
-    const interval = setInterval(tick, POLL_INTERVAL_MS);
+    if (wasActive) startInterval();
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      const isActive = state === 'active';
+      if (isActive && !wasActive) {
+        void tick();
+        startInterval();
+      } else if (!isActive && wasActive) {
+        stopInterval();
+      }
+      wasActive = isActive;
+    });
+
     return () => {
       stopped = true;
-      clearInterval(interval);
+      stopInterval();
+      subscription.remove();
     };
   }, []);
 }

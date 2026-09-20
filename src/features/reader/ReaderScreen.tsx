@@ -43,6 +43,8 @@ import { closeBook } from '@/features/encryption/contentProvider';
 import { DownloadFailure } from '@/features/download/errors';
 import { startAccessMonitor } from '@/features/download/readingAccessMonitor';
 import type { AccessMonitorHandle } from '@/features/download/readingAccessMonitor';
+import { WIRE_ERROR_COPY, ERROR_CODES } from '@model/errorCopy';
+import type { ErrorCode } from '@model/types';
 import { loadFontFaceSrc } from '@/features/personalization/fontFaceLoader';
 import { prefsStore } from '@/features/personalization/prefsStore';
 import { toReaderAppearance } from '@/features/personalization/readerAppearance';
@@ -1429,10 +1431,25 @@ function ReaderScreenComponent(
             // Routed through the SAME reaction a `content.lock` push gets — a poll (this) and a
             // push (useContentLock) discovering the same kind of thing on different schedules is
             // one defect, not two, and `tearDownAndLock` is what stops the book after either.
+            //
+            // MESSAGE PREVIOUSLY: a raw enum name interpolated into "was revoked while reading" —
+            // shown to the user literally, e.g. "...DEVICE_LIMIT_REACHED. (some error object)".
+            // Worse than unreadable: DEVICE_LIMIT_REACHED isn't a revocation at all (this device
+            // hit its concurrent-reading cap, entitlement is still valid — see FAIL_CLOSED_CODES's
+            // own comment in readingSessionClient.ts), so every capped reader saw their book slam
+            // shut every ~5 minutes captioned as if access had been withdrawn. Looking the code up
+            // in WIRE_ERROR_COPY (same map ItemDetailScreen's licence errors use) gives the real,
+            // actionable sentence for DEVICE_LIMIT_REACHED and every other known code, falling
+            // back to a plain "access has changed" line — never the bare enum — for anything else.
+            const knownCode =
+              (ERROR_CODES as readonly string[]).includes(failure.code)
+                ? (failure.code as unknown as ErrorCode)
+                : undefined;
             tearDownAndLock(
               'ACCESS_REVOKED',
-              `Access to this book was revoked while reading: ${failure.code}. ` +
-                `(${String(failure.cause ?? failure.message)})`,
+              knownCode !== undefined
+                ? WIRE_ERROR_COPY[knownCode]
+                : 'Access to this book has changed, and it can no longer stay open.',
             );
           });
 

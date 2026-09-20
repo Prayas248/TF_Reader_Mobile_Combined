@@ -104,6 +104,12 @@ export enum DownloadError {
    * whereas expiry is a natural lapse of a time-bounded grant. The offline fallback's `is_valid`
    * check raises this on a pull-based revocation signal. */
   ENTITLEMENT_REVOKED = 'ENTITLEMENT_REVOKED',
+  /** 503 SERVICE_UNAVAILABLE — a Redis/Mongo blip on the backend (GlobalExceptionHandler's
+   * DataAccessException handler, added 2026-09-20). Transient and worth a plain retry, unlike
+   * every denial code above — promoted out of the generic SESSION_FETCH_FAILED/LOAN_FAILED
+   * fallback for the same reason DEVICE_LIMIT_REACHED etc. were: this name matches ErrorCode's
+   * member exactly, so a WIRE_ERROR_COPY lookup by err.code finds real copy for it. */
+  SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE',
 }
 
 export class DownloadFailure extends Error {

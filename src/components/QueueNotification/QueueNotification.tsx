@@ -41,6 +41,12 @@ export interface QueueNotificationProps {
   expiresInMinutes?: number;
   /** Omitted when nothing is in flight, which is the normal case. */
   pending?: QueueNotificationPending;
+  /**
+   * Set by the caller after a failed accept/reject, cleared on the next attempt. Previously
+   * there was no such prop at all — a failure was `console.log`-only, so the banner just went
+   * back to idle with nothing telling the reader anything went wrong.
+   */
+  errorMessage?: string;
   onAccept: () => void;
   onReject: () => void;
 }
@@ -60,6 +66,7 @@ export default function QueueNotification({
   title,
   expiresInMinutes,
   pending,
+  errorMessage,
   onAccept,
   onReject,
 }: QueueNotificationProps) {
@@ -78,6 +85,12 @@ export default function QueueNotification({
 
       {expiresInMinutes !== undefined && (
         <Text style={styles.expiry}>{expiryLabel(expiresInMinutes)}</Text>
+      )}
+
+      {errorMessage !== undefined && (
+        <Text style={styles.error} accessibilityRole="alert" testID="queue-notification-error">
+          {errorMessage}
+        </Text>
       )}
 
       {/* Each button is disabled while the OTHER one is in flight, so one offer
@@ -138,6 +151,13 @@ const styles = StyleSheet.create({
     fontSize: type.meta.size,
     lineHeight: type.meta.lineHeight,
     color: color.wait,
+  },
+  error: {
+    fontWeight: type.meta.weight,
+    fontFamily: type.meta.fontFamily,
+    fontSize: type.meta.size,
+    lineHeight: type.meta.lineHeight,
+    color: color.error,
   },
   row: {
     flexDirection: 'row',

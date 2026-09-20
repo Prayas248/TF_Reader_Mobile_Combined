@@ -91,6 +91,8 @@ export const API_BASE_URL = USE_REAL_BACKEND ? REAL_BACKEND_URL : MOCK_BACKEND_U
 
 // The mock backend has no auth at all (see B1) and no `/api/v1/auth/*` routes, so attaching a
 // bearer token there would just add a header nobody checks. Real-backend calls DO get rejected
-// (401 UNAUTHENTICATED) without one — see devAuthToken.ts. Exported rather than duplicating the
-// `EXPO_PUBLIC_USE_REAL_BACKEND` read, so the two never drift apart.
+// (401 UNAUTHENTICATED) without one — see readingSessionClient.ts's authHeaders(), which reads
+// the real signed-in session's token via ensureFreshToken() rather than a dev-only stand-in.
+// Exported rather than duplicating the `EXPO_PUBLIC_USE_REAL_BACKEND` read, so the two never
+// drift apart.
 export const AUTH_REQUIRED = USE_REAL_BACKEND;

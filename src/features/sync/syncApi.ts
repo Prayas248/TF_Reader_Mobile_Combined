@@ -1,4 +1,5 @@
-import { getAuthToken, invalidateAuthToken } from './devAuthToken';
+import { ensureFreshToken } from '@/auth/tokenRefresh';
+import { useSessionStore } from '@store/sessionStore';
 import { API_BASE_URL, API_V1, REQUEST_TIMEOUT_MS } from './syncConfig';
 
 /**
@@ -92,13 +93,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
     // chain 401s before routing runs, same as download/readingSessionClient.ts's real-backend calls.
     // Fetched inside this try so a token-fetch failure surfaces as the same transient ApiError(0) a
     // network failure below would, rather than an uncaught bare Error.
-    const token = await getAuthToken();
+    //
+    // PREVIOUSLY: devAuthToken.ts minted a token for a hardcoded dev identity, disconnected from
+    // whoever actually signed in — every synced bookmark/highlight/progress/preference record was
+    // written under that fake identity, never the real account. ensureFreshToken() is the same
+    // real-session source every other authenticated call in the app uses.
+    const token = await ensureFreshToken();
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        ...(token !== undefined ? { Authorization: `Bearer ${token}` } : {}),
         ...(init?.headers ?? {}),
       },
     });
@@ -113,10 +119,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
   const serverTime = parseServerDate(response.headers.get('date'));
 
   if (!response.ok) {
-    // If the token was rejected, clear it so the next request fetches a fresh one.
-    // A 401 means the server invalidated it (e.g., password changed on another device).
+    // If the token was rejected, clear the session so the next request forces a real refresh
+    // (or a fresh sign-in, if the refresh token is dead too) rather than the same session store
+    // handing ensureFreshToken() the identical rejected access token again. A 401 means the
+    // server invalidated it (e.g., signed out on another device, session revoked).
     if (response.status === 401) {
-      invalidateAuthToken();
+      useSessionStore.getState().clearSession();
     }
     throw new ApiError(
       `${response.status} ${response.statusText} on ${path}`,

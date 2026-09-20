@@ -6,7 +6,7 @@
 // exactly one place that calls the refresh endpoint.
 import { getToken, useSessionStore } from '@store/sessionStore';
 import { useInstitutionStore } from '@store/institutionStore';
-import { getRefreshToken, saveRefreshToken } from '@store/secureStorage';
+import { getRefreshToken, saveDeviceId, saveRefreshToken } from '@store/secureStorage';
 import { setLicenceToken } from '@/config/licence';
 import { AuthError, AuthFailure } from './AuthFailure';
 import { getDefaultAuthClient } from './defaultAuthClient';
@@ -119,6 +119,13 @@ async function applyRefreshedToken(
   // caller's catch must not wipe the session out from under a refresh token
   // that was never written down.
   await saveRefreshToken(tokenPair.refreshToken);
+  // The backend re-confirms this device's id on every refresh too (AuthController.java's
+  // `/refresh` returns the same TokenResponse shape as `/token`) — keep it current here as
+  // well, not just at the initial SAML sign-in, so a device's stored id can never drift out
+  // of sync with what the backend actually issued.
+  if (tokenPair.deviceId !== undefined) {
+    await saveDeviceId(tokenPair.deviceId);
+  }
 
   const existing = useSessionStore.getState();
 

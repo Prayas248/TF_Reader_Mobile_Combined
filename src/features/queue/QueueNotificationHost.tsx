@@ -21,10 +21,38 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useOfferStore } from '@store/offerStore';
 import { getLicenceSource } from '@config/licence';
 import { getCatalogueSource } from '@config/catalogue';
+import { isLicenceFailure, LicenceError } from '@/licence/LicenceSource';
+import { WIRE_ERROR_COPY, ERROR_CODES } from '@model/errorCopy';
+import type { ErrorCode } from '@model/types';
 import { space } from '@theme/tokens';
 import QueueNotification, { type QueueNotificationPending } from '@components/QueueNotification';
 
 import { useOfferPolling } from './offerPolling';
+
+const QUEUE_ACTION_GENERIC_MESSAGE = "That action couldn't be completed. Please try again.";
+
+// Same lookup ItemDetailScreen.tsx/ReaderScreen.tsx use for a LicenceFailure: REFUSED carries
+// flambeau's own errorCode in WIRE_ERROR_COPY's vocabulary; everything else gets transport-level
+// copy. Kept local rather than shared — three near-identical three-line lookups is cheaper to
+// read than a shared helper for something this small (see CLAUDE.md/STYLE's "no premature
+// abstraction" — Ahana can promote it if a fourth caller needs it).
+function messageFor(err: unknown): string {
+  if (!isLicenceFailure(err)) return QUEUE_ACTION_GENERIC_MESSAGE;
+  if (err.code === LicenceError.REFUSED) {
+    const knownCode =
+      err.errorCode !== undefined && (ERROR_CODES as readonly string[]).includes(err.errorCode)
+        ? (err.errorCode as ErrorCode)
+        : undefined;
+    return knownCode !== undefined ? WIRE_ERROR_COPY[knownCode] : QUEUE_ACTION_GENERIC_MESSAGE;
+  }
+  if (err.code === LicenceError.NETWORK_UNAVAILABLE) {
+    return 'You appear to be offline. Please check your connection and try again.';
+  }
+  if (err.code === LicenceError.TIMEOUT) {
+    return 'This took too long to respond. Please try again.';
+  }
+  return QUEUE_ACTION_GENERIC_MESSAGE;
+}
 
 export default function QueueNotificationHost() {
   useOfferPolling();
@@ -44,6 +72,7 @@ export default function QueueNotificationHost() {
     undefined,
   );
   const [pending, setPending] = useState<QueueNotificationPending | undefined>(undefined);
+  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
 
   // Resolved separately from the offer itself: the store knows the hold, not the
   // title, and `getItemsBatch` (F9) is the one call away the contract promises.
@@ -84,25 +113,30 @@ export default function QueueNotificationHost() {
   // defined after the check keeps it.
   const handleAccept = () => {
     setPending('accept');
+    setErrorMessage(undefined);
     getLicenceSource()
       .acceptOffer(holdId)
       .then(() => useOfferStore.getState().clear())
       .catch((error: unknown) => {
-        // The offer stays in offerStore on failure, so the banner reappears
-        // and the reader can just try again — logged so a failure isn't
-        // completely invisible while there's no dedicated error affordance.
+        // Previously: console.log only, no user-facing signal at all — a DEVICE_LIMIT_REACHED,
+        // an OFFER_EXPIRED, or a plain timeout all produced the identical experience (spinner,
+        // spinner stops, banner still there, nothing said). The offer stays in offerStore on
+        // failure either way, so the banner reappears and the reader can retry.
         console.log('QueueNotificationHost: acceptOffer failed', error);
+        setErrorMessage(messageFor(error));
       })
       .finally(() => setPending(undefined));
   };
 
   const handleReject = () => {
     setPending('reject');
+    setErrorMessage(undefined);
     getLicenceSource()
       .cancelHold(holdId)
       .then(() => useOfferStore.getState().clear())
       .catch((error: unknown) => {
         console.log('QueueNotificationHost: cancelHold failed', error);
+        setErrorMessage(messageFor(error));
       })
       .finally(() => setPending(undefined));
   };
@@ -113,6 +147,7 @@ export default function QueueNotificationHost() {
         title={title ?? ''}
         expiresInMinutes={minutesRemaining}
         pending={pending}
+        errorMessage={errorMessage}
         onAccept={handleAccept}
         onReject={handleReject}
       />

@@ -16,7 +16,7 @@
 import { ApiAuthClient, type TokenPair } from './ApiAuthClient';
 import { getDefaultAuthClient } from './defaultAuthClient';
 import { openSamlBrowser } from './openSamlBrowser';
-import { saveRefreshToken } from '@store/secureStorage';
+import { getDeviceId, saveDeviceId, saveRefreshToken } from '@store/secureStorage';
 import { useSessionStore } from '@store/sessionStore';
 
 // `idpHint` is accepted because the request needs it, and is currently inert
@@ -39,10 +39,18 @@ export async function beginSamlSignIn(
   const authClient = deps.authClient ?? getDefaultAuthClient();
   const openBrowser = deps.openBrowser ?? openSamlBrowser;
 
-  const start = await authClient.startSamlSignIn({ institutionId, idpHint });
+  // Echo back whatever deviceId THIS device was given on a previous sign-in — null on this
+  // device's first-ever sign-in, which the backend already treats as "mint a new one".
+  // Previously never read at all, so the backend never saw a returning device as anything
+  // but new: every sign-in spent a fresh institutional seat, indefinitely.
+  const deviceId = (await getDeviceId()) ?? undefined;
+  const start = await authClient.startSamlSignIn({ institutionId, idpHint, deviceId });
   const code = await openBrowser(start.authorizationUrl);
   const tokenPair = await authClient.exchangeSignInCode(code);
   console.log('beginSamlSignIn: token pair received', tokenPair);
+  if (tokenPair.deviceId !== undefined) {
+    await saveDeviceId(tokenPair.deviceId);
+  }
 
   const currentSession = await authClient.getCurrentSession(tokenPair.accessToken);
   console.log('beginSamlSignIn: current session received', currentSession);

@@ -507,6 +507,10 @@ export const ERROR_CODES = [
   // wokay's `items:batch` refusing more than 100 ids. Prayas's get-many-books
   // call, which is Week 3 — but the code is receivable and costs one line.
   'TOO_MANY_IDS',
+  // A Redis/Mongo blip on the backend (GlobalExceptionHandler's own DataAccessException
+  // handler, added 2026-09-20) — transient, worth retrying, and deliberately NOT the same
+  // code as a genuine application bug would carry.
+  'SERVICE_UNAVAILABLE',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

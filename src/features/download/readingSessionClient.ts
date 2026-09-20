@@ -17,18 +17,30 @@
 
 import type { BookId, BorrowRequest, Loan, ReadingFormat, ReadingSessionRequest, ReadingSessionResponse, FlambeauError } from '@/shared/contracts';
 import { generateDeviceKeypair, publicKeyToRawBase64 } from '../encryption/deviceKeypair';
+import { ensureFreshToken } from '@/auth/tokenRefresh';
 import { API_BASE_URL, AUTH_REQUIRED } from './config';
-import { getAuthToken } from './devAuthToken';
 import { DownloadError, DownloadFailure, UnmappedServerResponse } from './errors';
 
 // Real-backend calls need a bearer token or the `tf-app` resource-server chain 401s before
-// routing runs (see devAuthToken.ts). The mock backend has no `/api/v1/auth/*` routes at all, so
-// this must stay conditional on AUTH_REQUIRED rather than always fetching one.
+// routing runs. The mock backend has no `/api/v1/auth/*` routes at all, so this must stay
+// conditional on AUTH_REQUIRED rather than always fetching one.
+//
+// PREVIOUSLY: a `devAuthToken.ts` dev-only helper minted a token for a hardcoded identity
+// (`usr_dev123`), completely disconnected from whoever actually signed in. Every open/borrow
+// through this path spent that fake identity's own seat on any ELITE title — a title with only
+// 2 copies (like `dev-sample-audio-encrypted`) was permanently exhausted between that identity
+// and whatever the real signed-in user separately borrowed via ItemDetailScreen's own flow,
+// with the dev-token loans never returned by anything (see this file's own missing release
+// logic). `ensureFreshToken()` is the same real-session token source every other authenticated
+// call in the app already uses (config/catalogue.ts, config/search.ts) — this now shares the
+// real identity, real seat, and real returnLoan path with the rest of the app instead of a
+// second, disconnected one.
 async function authHeaders(): Promise<Record<string, string>> {
   if (!AUTH_REQUIRED) {
     return {};
   }
-  return { Authorization: `Bearer ${await getAuthToken()}` };
+  const token = await ensureFreshToken();
+  return token !== undefined ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export { fetchEncryptedAsset } from './contentLicenceClient';
@@ -36,11 +48,21 @@ export { fetchEncryptedAsset } from './contentLicenceClient';
 // React Native's `fetch` has no default timeout: a host that accepts the TCP connection and then
 // never answers (dead proxy, captive portal, a firewall silently dropping packets) leaves `await
 // fetch(...)` pending forever, and the fail-open catch in `verifyReadingAccess` below can only run
-// once the call actually rejects. Same value and same abort-controller-plus-timer shape as
-// `sync/syncApi.ts`'s `request()` (`REQUEST_TIMEOUT_MS` in `sync/syncConfig.ts`) — not imported
-// from there, since `sync/` and `download/` are separately owned modules with their own configs
-// (see `config.ts`'s header on why `download/` never reaches into `sync/config.ts`).
-const REQUEST_TIMEOUT_MS = 8000;
+// once the call actually rejects. Same abort-controller-plus-timer shape as `sync/syncApi.ts`'s
+// `request()` — not imported from there, since `sync/` and `download/` are separately owned
+// modules with their own configs (see `config.ts`'s header on why `download/` never reaches into
+// `sync/config.ts`).
+//
+// WAS 8000 — too tight specifically for `openReadingSession`'s POST /api/v1/reading-sessions,
+// which for a copy-limited ELITE title does real work server-side in one call: entitlement
+// check, a Redis copy-lease claim, a Mongo loan write, AND (for encrypted content) an RSA-OAEP
+// key wrap to THIS device's real public key plus a signed asset URL from object storage. A
+// timeout here doesn't surface as a clean, specific error — the abort makes `fetch` itself
+// reject, which this file's own catch maps to the generic SESSION_FETCH_FAILED with no error
+// code at all, indistinguishable from a genuine backend refusal. 20s matches ReaderScreen.tsx's
+// own OPEN_TIMEOUT_MS budget for the whole "open a book" user action, which this call is one
+// part of. See queue audit, 2026-09-20.
+const REQUEST_TIMEOUT_MS = 20_000;
 
 // A DELIBERATE SUBSET of FlambeauErrorCode gets its own DownloadError member (errors.ts) — only
 // the ones a caller here can react to differently. Everything else falls back to the generic
@@ -64,6 +86,7 @@ const SESSION_ERROR_CODE_MAP: Partial<Record<FlambeauError['code'], DownloadErro
   DEVICE_LIMIT_REACHED: DownloadError.DEVICE_LIMIT_REACHED,
   NO_ACTIVE_LOAN: DownloadError.NO_ACTIVE_LOAN,
   CONTENT_NOT_READY: DownloadError.CONTENT_NOT_READY,
+  SERVICE_UNAVAILABLE: DownloadError.SERVICE_UNAVAILABLE,
 };
 
 // Reads the real Error envelope (reading-session.ts's FlambeauError) off a non-ok response, if the

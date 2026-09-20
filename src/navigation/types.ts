@@ -137,7 +137,7 @@ export type CatalogueStackParamList = {
   // route, not a `Reader` param, because the two screens have unrelated
   // implementations underneath (expo-audio vs. the epub.js/pdf.js WebView
   // bridge) — see AudioPlayerRouteScreen.tsx's own header.
-  AudioPlayer: { bookId: BookId; title: string };
+  AudioPlayer: { bookId: BookId; title: string; coverUrl?: string };
 };
 
 /** Search nested stack — shares ItemDetail shape. */
@@ -158,7 +158,7 @@ export type SearchStackParamList = {
   Reader: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTarget };
   BookInfo: { bookId: BookId };
   // Same reason as CatalogueStackParamList.AudioPlayer — see its own comment.
-  AudioPlayer: { bookId: BookId; title: string };
+  AudioPlayer: { bookId: BookId; title: string; coverUrl?: string };
 };
 
 /**
@@ -200,7 +200,7 @@ export type LibraryStackParamList = {
   Reader: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTarget };
   BookInfo: { bookId: BookId };
   // Same reason as CatalogueStackParamList.AudioPlayer — see its own comment.
-  AudioPlayer: { bookId: BookId; title: string };
+  AudioPlayer: { bookId: BookId; title: string; coverUrl?: string };
 };
 
 /** Profile stack — screen 10, plus the settings screens it pushes. */
