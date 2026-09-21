@@ -196,7 +196,9 @@ function toAcquisition(link: Json): Acquisition {
 // feed actually supplies more than one. With a single image, claiming a thumbnail
 // would hand the UI a full-size asset to render in a list row.
 function toImages(value: unknown): { coverUrl?: string; thumbnailUrl?: string } {
-  if (value === undefined) return {};
+  // `null` is a real "no cover yet" state (the Journals group's container
+  // publications send it explicitly), not just an absent key — treat both the same.
+  if (value === undefined || value === null) return {};
   const images = asArray(value, 'images')
     .map((raw) => asRecord(raw, 'image'))
     .map((image) => ({ href: optString(image.href), width: optNumber(image.width) ?? 0 }))
@@ -389,27 +391,72 @@ export function normalizeWorkFeed(doc: unknown): WorkFeed {
   };
 }
 
+// A journal's cover lives on a lightweight container Publication inside the
+// "Journals" group, because OPDS 2.0 only allows images on a Publication, never
+// on a plain navigation link. A journal has nothing of its own to acquire, so
+// this shape carries only a `subsection` link — no `self`, no acquisition link —
+// and normalizePublication (which requires both) cannot be used to read it.
+function toJournalCover(doc: unknown): { workId: string; coverUrl?: string } {
+  const publication = asRecord(doc, 'journal publication');
+  const links = asArray(publication.links, 'journal publication links');
+  const subsection = findLink(links, (rel) => rel === 'subsection');
+  if (subsection === undefined) throw malformed('journal publication has no subsection link');
+  const workId = idFromHref(reqString(subsection.href, 'journal publication subsection href'));
+  const { coverUrl } = toImages(publication.images);
+  return coverUrl === undefined ? { workId } : { workId, coverUrl };
+}
+
+const JOURNALS_GROUP_TITLE = 'Journals';
+
+// The backend hardcodes this exact title for the one group that carries
+// container publications instead of real, acquirable ones (OpdsFeedService's
+// buildJournalsGroup) — used to keep it out of normalizeShelf, which requires a
+// self link and real acquisition links this group's entries do not have.
+function isJournalsGroup(doc: unknown): boolean {
+  const group = asRecord(doc, 'group');
+  const metadata = asRecord(group.metadata, 'group metadata');
+  return optString(metadata.title) === JOURNALS_GROUP_TITLE;
+}
+
 export function normalizeCatalogue(doc: unknown): Catalogue {
   const catalogue = asRecord(doc, 'catalogue');
   const metadata = asRecord(catalogue.metadata, 'catalogue metadata');
   const links = asArray(catalogue.links, 'catalogue links');
   const search = findLink(links, (rel) => rel === 'search');
 
+  // Navigation and groups are both optional: a brand-new institution may have
+  // neither, which is an empty catalogue rather than a broken feed.
+  const groups = catalogue.groups === undefined ? [] : asArray(catalogue.groups, 'groups');
+  const journalGroups = groups.filter(isJournalsGroup);
+  const shelfGroups = groups.filter((group) => !isJournalsGroup(group));
+
+  // workId -> coverUrl, built from the Journals group(s) so the plain navigation
+  // signposts below (which carry no images of their own) can pick up a cover
+  // without the shelf/publication list gaining an extra, unopenable "shelf".
+  const journalCovers = new Map(
+    journalGroups
+      .flatMap((group) =>
+        asArray(asRecord(group, 'journals group').publications, 'journals group publications'),
+      )
+      .map(toJournalCover)
+      .filter((cover): cover is { workId: string; coverUrl: string } => cover.coverUrl !== undefined)
+      .map((cover) => [cover.workId, cover.coverUrl] as const),
+  );
+
+  const navigation = (
+    catalogue.navigation === undefined ? [] : asArray(catalogue.navigation, 'navigation').map(toNavLink)
+  ).map((link) => {
+    const cover = link.workId !== undefined ? journalCovers.get(link.workId) : undefined;
+    return link.coverUrl === undefined && cover !== undefined ? { ...link, coverUrl: cover } : link;
+  });
+
   return {
     title: reqString(metadata.title, 'catalogue title'),
     ...(optString(metadata.modified) !== undefined
       ? { modified: optString(metadata.modified) as string }
       : {}),
-    // Navigation and groups are both optional: a brand-new institution may have
-    // neither, which is an empty catalogue rather than a broken feed.
-    navigation:
-      catalogue.navigation === undefined
-        ? []
-        : asArray(catalogue.navigation, 'navigation').map(toNavLink),
-    shelves:
-      catalogue.groups === undefined
-        ? []
-        : asArray(catalogue.groups, 'groups').map(normalizeShelf),
+    navigation,
+    shelves: shelfGroups.map(normalizeShelf),
     // Kept templated ('...{?query}') for the search feature to expand itself.
     ...(search !== undefined
       ? { searchHref: reqString(search.href, 'search href') }

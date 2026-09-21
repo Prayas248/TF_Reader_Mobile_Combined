@@ -89,6 +89,27 @@ export async function openBook(bookId: BookId, format: ContentFormat): Promise<U
   const isEncrypted = session.encryption != null;
   const maxCipherBytes = maxDecryptedBytesFor(format) + (isEncrypted ? NONCE_BYTES + GCM_TAG_BYTES : 0);
 
+  // Kicked off ALONGSIDE the content fetch, not after it. This used to be a plain `await` placed
+  // below the checksum/budget checks — correct, but it meant every open paid for two SEQUENTIAL
+  // B2 round-trips (content, then index) when the reader only ever needs `bytes` to render; the
+  // index is best-effort and exists purely for in-book search. On a slow connection that stacked a
+  // second full transfer on top of the first for no reason. Starting it here lets its network time
+  // overlap with the (much larger) content fetch instead — by the time `bytes` resolves and the
+  // checks below pass, `indexPromise` has often already settled too. Never awaited until after
+  // those checks, and its own `.catch` still means a slow/failed index can never fail the open.
+  let indexPromise: Promise<Uint8Array | undefined> = Promise.resolve(undefined);
+  if (session.index?.encryptedBytes) {
+    // MUST BASE64-DECODE, NOT ASSIGN DIRECTLY — see the note that used to sit beside this branch
+    // (still true, just moved): `IndexUrl.encryptedBytes` is base64 text because it crosses the
+    // wire inside a JSON body, never a real `Uint8Array`.
+    indexPromise = Promise.resolve(base64ToBytes(session.index.encryptedBytes));
+  } else if (session.index?.url) {
+    indexPromise = fetchEncryptedAsset(bookId, session.index.url).catch((cause: unknown) => {
+      console.warn(`openBook: failed to fetch search index for ${bookId}, continuing without it`, cause);
+      return undefined;
+    });
+  }
+
   let bytes: Uint8Array;
   try {
     bytes = await fetchEncryptedAssetChunked(bookId, session.content.url, {

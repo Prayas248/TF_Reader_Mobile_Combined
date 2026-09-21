@@ -11,7 +11,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react-nativ
 
 import type { DataSource } from '@adapters/InstitutionSource';
 import { setCatalogueSource } from '@config/catalogue';
-import type { Shelf } from '@model/types';
+import type { Catalogue, Shelf } from '@model/types';
 import type { CatalogueStackParamList } from '@navigation/types';
 
 import { useLibraryStore } from '@store/libraryStore';
@@ -124,13 +124,17 @@ const PAGE_1: Shelf = {
 };
 
 // Every method a real DataSource must have, so the fake typechecks as one.
-// Only `getShelf` is exercised — the rest throw if the screen ever reaches
-// for them, which would mean it grew a dependency this suite does not know
-// to fake.
-function fakeSource(getShelf: DataSource['getShelf']): DataSource {
+// Only `getShelf` (and, for the 'all'-only Journals section,
+// `getHomeCatalogue`) is exercised — the rest throw if the screen ever
+// reaches for them, which would mean it grew a dependency this suite does
+// not know to fake.
+function fakeSource(
+  getShelf: DataSource['getShelf'],
+  getHomeCatalogue?: DataSource['getHomeCatalogue'],
+): DataSource {
   const unused = () => Promise.reject(new Error('not stubbed for this test'));
   return {
-    getHomeCatalogue: unused,
+    getHomeCatalogue: getHomeCatalogue ?? unused,
     getShelf,
     getPublication: unused,
     getPublicFeed: unused,
@@ -767,6 +771,128 @@ describe('ShelfScreen — B10 empty state', () => {
     await render(<ShelfScreen {...routeProps} />);
 
     await waitFor(() => expect(screen.getByText(/showing 0 of 0/i)).toBeTruthy());
+  });
+});
+
+// Journals have no `contentState`, so they can never appear in `getShelf('all', ...)`'s
+// own paginated feed — this section is a second, independent fetch of the home
+// catalogue's `navigation`, restricted to 'all' since no other shelf claims to
+// be everything.
+describe('ShelfScreen — Journals in "All titles"', () => {
+  const CATALOGUE_WITH_JOURNALS: Catalogue = {
+    title: 'Somewhere Library',
+    navigation: [
+      {
+        title: 'All titles',
+        href: 'https://api.tf/opds/v1/institutions/inst_7f3/groups/all',
+        shelfId: 'all',
+        target: 'shelf',
+      },
+      {
+        title: 'All life',
+        href: 'https://api.tf/opds/v1/institutions/inst_7f3/works/item_88200446',
+        shelfId: 'item_88200446',
+        target: 'works',
+        workId: 'item_88200446',
+        coverUrl: 'https://cdn.tf/covers/all-life.jpg',
+      },
+    ],
+    shelves: [],
+  };
+  const allTitlesProps = propsFor({ shelfId: 'all', title: 'All titles', institutionId: 'inst_7f3' });
+
+  it('shows journal cards, sourced from the home catalogue, only on "all" — with no "Journals" label', async () => {
+    const getHomeCatalogue = jest.fn(async () => CATALOGUE_WITH_JOURNALS);
+    setCatalogueSource(fakeSource(async () => MIXED_TIER_SHELF, getHomeCatalogue));
+
+    await render(<ShelfScreen {...allTitlesProps} />);
+
+    await waitFor(() => expect(screen.getByText('All life')).toBeTruthy());
+    expect(getHomeCatalogue).toHaveBeenCalledWith('inst_7f3');
+    // One continuous grid, not a labeled section — see ShelfScreen.tsx's own
+    // comment on why journals and books are chunked together.
+    expect(screen.queryByText('Journals')).toBeNull();
+  });
+
+  it('renders journals and books together in one grid, not two separate ones', async () => {
+    const threeJournals: Catalogue = {
+      title: 'Somewhere Library',
+      navigation: [
+        {
+          title: 'All life',
+          href: 'https://api.tf/opds/v1/institutions/inst_7f3/works/item_1',
+          shelfId: 'item_1',
+          target: 'works',
+          workId: 'item_1',
+        },
+        {
+          title: 'Applied Phycology',
+          href: 'https://api.tf/opds/v1/institutions/inst_7f3/works/item_2',
+          shelfId: 'item_2',
+          target: 'works',
+          workId: 'item_2',
+        },
+        {
+          title: 'Big Earth Data',
+          href: 'https://api.tf/opds/v1/institutions/inst_7f3/works/item_3',
+          shelfId: 'item_3',
+          target: 'works',
+          workId: 'item_3',
+        },
+      ],
+      shelves: [],
+    };
+    setCatalogueSource(fakeSource(async () => MIXED_TIER_SHELF, async () => threeJournals));
+
+    await render(<ShelfScreen {...allTitlesProps} />);
+
+    // All three journals (an odd count — the case that used to leave a gap)
+    // and both books from MIXED_TIER_SHELF all land on screen, with nothing
+    // in between them labeled "Journals".
+    await waitFor(() => expect(screen.getByText('Big Earth Data')).toBeTruthy());
+    expect(screen.getByText('All life')).toBeTruthy();
+    expect(screen.getByText('Applied Phycology')).toBeTruthy();
+    expect(screen.getByText('Rights for Robots')).toBeTruthy();
+    expect(screen.getByText('Ethnographies of Waiting')).toBeTruthy();
+    expect(screen.queryByText('Journals')).toBeNull();
+  });
+
+  it('navigates to the Journal drill-down, not ItemDetail, when a journal row is pressed', async () => {
+    setCatalogueSource(fakeSource(async () => MIXED_TIER_SHELF, async () => CATALOGUE_WITH_JOURNALS));
+
+    await render(<ShelfScreen {...allTitlesProps} />);
+
+    await waitFor(() => expect(screen.getByText('All life')).toBeTruthy());
+    fireEvent.press(screen.getByText('All life'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('Journal', {
+      workId: 'item_88200446',
+      title: 'All life',
+      institutionId: 'inst_7f3',
+      coverUrl: 'https://cdn.tf/covers/all-life.jpg',
+    });
+  });
+
+  it('shows no Journals section, and makes no home-catalogue call, on a shelf other than "all"', async () => {
+    const getHomeCatalogue = jest.fn(async () => CATALOGUE_WITH_JOURNALS);
+    setCatalogueSource(fakeSource(async () => FAKE_SHELF, getHomeCatalogue));
+
+    await render(<ShelfScreen {...routeProps} />);
+
+    await waitFor(() => expect(screen.getByText('Rights for Robots')).toBeTruthy());
+    expect(screen.queryByText('All life')).toBeNull();
+    expect(getHomeCatalogue).not.toHaveBeenCalled();
+  });
+
+  it('does not blank the book grid when the journals fetch fails', async () => {
+    setCatalogueSource(
+      fakeSource(async () => MIXED_TIER_SHELF, () => Promise.reject(new Error('network down'))),
+    );
+
+    await render(<ShelfScreen {...allTitlesProps} />);
+
+    await waitFor(() => expect(screen.getByText('Rights for Robots')).toBeTruthy());
+    expect(screen.queryByText('All life')).toBeNull();
   });
 });
 

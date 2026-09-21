@@ -80,7 +80,7 @@ import { getCatalogueSource } from '../config/catalogue';
 import { useNetworkStatus } from '@hooks/useNetworkStatus';
 import { type CatalogueError, isCatalogueFailure } from '@model/errors';
 import { CATALOGUE_ERROR_COPY, catalogueErrorVariant } from '@model/errorCopy';
-import type { Publication, Shelf, SortOrder } from '../model/types';
+import type { NavLink, Publication, Shelf, SortOrder } from '../model/types';
 import type { CatalogueStackParamList } from '../navigation/types';
 import type { BrowseFilters } from '@search/browseLink';
 import { color, space, type as typeScale } from '../theme/tokens';
@@ -155,6 +155,25 @@ export default function ShelfScreen({ route }: Props) {
   const [failed, setFailed] = useState(false);
   const [errorCode, setErrorCode] = useState<CatalogueError | undefined>(undefined);
   const [moreStatus, setMoreStatus] = useState<MoreStatus>('idle');
+
+  // Journals have no `contentState`, so they can never appear in `all`'s own
+  // paginated feed (see getShelf) — this is a second, independent fetch of the
+  // home catalogue's `navigation`, filtered to the same `target: 'works'`
+  // entries CatalogueScreen's own Journals section already renders. Only 'all'
+  // claims to be literally everything, so no other shelf gets this section.
+  const [journals, setJournals] = useState<NavLink[]>([]);
+
+  useEffect(() => {
+    if (shelfId !== 'all') return;
+    getCatalogueSource()
+      .getHomeCatalogue(institutionId)
+      .then((catalogue) => {
+        setJournals(catalogue.navigation.filter((entry) => entry.target === 'works'));
+      })
+      // A bonus section, not the screen's primary content: failing here must
+      // not touch `failed`/`errorCode`, which are for the shelf fetch below.
+      .catch((err: unknown) => console.error('ShelfScreen: journals fetch failed', err));
+  }, [shelfId, institutionId]);
 
   // Screen 12 — filter & sort. APPLIED is what the last request actually used
   // (carried forward into loadMore's follow-up pages); DRAFT is what the sheet
@@ -317,6 +336,19 @@ export default function ShelfScreen({ route }: Props) {
         ? "Couldn't load more — tap to retry"
         : 'Load more';
 
+  // Journals first, then the shelf's own publications, chunked into pairs
+  // TOGETHER — not as two separate grids — so an odd journal count (e.g. 3)
+  // doesn't leave a lone tile on its own row with an empty gap beside it
+  // before the books start. No "Journals" label: this is one continuous grid,
+  // not two labeled sections.
+  type GridEntry =
+    | { kind: 'journal'; key: string; journal: NavLink }
+    | { kind: 'publication'; key: string; publication: Publication };
+  const gridEntries: GridEntry[] = [
+    ...journals.map((journal): GridEntry => ({ kind: 'journal', key: `journal-${journal.workId}`, journal })),
+    ...publications.map((publication): GridEntry => ({ kind: 'publication', key: publication.id, publication })),
+  ];
+
   return (
     <View style={styles.screen}>
       <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -365,16 +397,37 @@ export default function ShelfScreen({ route }: Props) {
               which already does target-based routing (see SearchScreen.tsx's
               browseInstead block). Wire it up here the same way if this screen is
               meant to offer it too. */}
-          {publications.length === 0 ? (
+          {gridEntries.length === 0 ? (
             <EmptyState
               variant={hasActiveFilter ? 'no_filter_results' : 'no_content'}
               onClearFilters={clearAllFilters}
             />
           ) : (
           <View style={styles.list}>
-            {chunkPairs(publications).map((pair, rowIndex) => (
+            {chunkPairs(gridEntries).map((pair, rowIndex) => (
               <View key={rowIndex} style={styles.gridRow}>
-                {pair.map((publication) => {
+                {pair.map((entry) => {
+                  if (entry.kind === 'journal') {
+                    const journal = entry.journal;
+                    return (
+                      <View key={entry.key} style={{ width: columnWidth }}>
+                        <ContentCard
+                          variant="cover"
+                          title={journal.title}
+                          imageUrl={journal.coverUrl}
+                          onPress={() =>
+                            navigation.navigate('Journal', {
+                              workId: journal.workId!,
+                              title: journal.title,
+                              institutionId,
+                              coverUrl: journal.coverUrl,
+                            })
+                          }
+                        />
+                      </View>
+                    );
+                  }
+                  const publication = entry.publication;
                   // Hoisted out of the `badge` prop: D12 needs the resolved
                   // ACTIONS as well as the tier, and resolving twice per row
                   // would be two answers to one question.
@@ -384,7 +437,7 @@ export default function ShelfScreen({ route }: Props) {
                     session,
                   });
                   return (
-                    <View key={publication.id} style={{ width: columnWidth }}>
+                    <View key={entry.key} style={{ width: columnWidth }}>
                       <ContentCard
                         variant="cover"
                         title={publication.title}

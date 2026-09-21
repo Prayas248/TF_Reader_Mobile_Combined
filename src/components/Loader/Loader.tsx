@@ -103,7 +103,7 @@ const QUOTES: readonly Quote[] = [
   { text: 'The more that you read, the more things you will know.', author: 'Dr. Seuss' },
 ];
 
-const QUOTE_INTERVAL_MS = 2200;
+const QUOTE_INTERVAL_MS = 12_000;
 const FADE_MS = 250;
 // Caps how many lines the quote/author pair may ever take, and reserves
 // exactly that much height below — see QUOTE_BLOCK_HEIGHT. Without a fixed

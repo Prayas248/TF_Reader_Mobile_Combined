@@ -10,7 +10,7 @@ import { act, render, screen } from '@testing-library/react-native';
 
 import Loader from './Loader';
 
-const QUOTE_INTERVAL_MS = 2200;
+const QUOTE_INTERVAL_MS = 12_000;
 
 beforeEach(() => {
   jest.useFakeTimers();
