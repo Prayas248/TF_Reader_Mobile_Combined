@@ -403,6 +403,41 @@ export function dueLabel(
   return minutes === 1 ? 'Due in 1 minute' : `Due in ${minutes} minutes`;
 }
 
+/**
+ * Same bucketing as `dueLabel` (see its own comment for why three units, one
+ * per order of magnitude, and why everything is ceiled rather than floored),
+ * but "Expires"/"Expired"/"No expiry date" instead of "Due"/"Due now"/"No due
+ * date" — an Elite loan is a lapsing ENTITLEMENT, not a borrowed copy with a
+ * date to hand it back, so it gets its own honest wording rather than
+ * borrowing a sentence that promises a return. Used ONLY where an Elite badge
+ * needs its own time-remaining line (`EliteLoanRow`) — every non-Elite loan
+ * badge on this screen uses `dueLabel` directly, so the two never appear
+ * nested inside one another the way `` `Access expires: ${dueLabel(...)}` ``
+ * once did.
+ */
+export function eliteExpiresLabel(
+  loan: Loan,
+  offsetMs: number,
+  deviceNowMs: number,
+): string {
+  if (loan.expiresAt === undefined) return 'No expiry date';
+  const remaining = loan.expiresAt - (deviceNowMs + offsetMs);
+  if (remaining <= 0) return 'Expired';
+
+  if (remaining >= MS_PER_DAY) {
+    const days = Math.ceil(remaining / MS_PER_DAY);
+    return days === 1 ? 'Expires in 1 day' : `Expires in ${days} days`;
+  }
+
+  if (remaining >= MS_PER_HOUR) {
+    const hours = Math.ceil(remaining / MS_PER_HOUR);
+    return hours === 1 ? 'Expires in 1 hour' : `Expires in ${hours} hours`;
+  }
+
+  const minutes = Math.ceil(remaining / MS_PER_MINUTE);
+  return minutes === 1 ? 'Expires in 1 minute' : `Expires in ${minutes} minutes`;
+}
+
 // ─── downloads copy ──────────────────────────────────────────────────────────
 
 const BYTES_PER_MB = 1_048_576;
@@ -566,6 +601,11 @@ export interface JournalGroup {
   journalTitle: string;
   institutionId: string;
   articleItemIds: string[];
+  // The journal's own cover, carried from whichever article's own membership
+  // record happened to be seen FIRST for this journal (see the loop below) —
+  // every article from the same journal shares one, so it does not matter
+  // which one supplies it, only that one does.
+  coverUrl?: string;
 }
 
 /**
@@ -600,10 +640,16 @@ export function groupArticlesByJournal(
         journalTitle: entry.journalTitle,
         institutionId: entry.institutionId,
         articleItemIds: [itemId],
+        coverUrl: entry.coverUrl,
       });
       order.push(entry.journalWorkId);
     } else {
       existing.articleItemIds.push(itemId);
+      // An older membership record (recorded before this field existed, or from
+      // whichever article happened to be viewed first) may be missing it —
+      // backfill from a later one rather than leaving the group cover-less
+      // forever because of which article's record loaded first.
+      existing.coverUrl ??= entry.coverUrl;
     }
   }
   return order.map((journalWorkId) => {

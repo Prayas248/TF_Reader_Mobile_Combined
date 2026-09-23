@@ -38,7 +38,7 @@ type Nav = NativeStackNavigationProp<CatalogueStackParamList, 'JournalIssue'>;
 type Props = NativeStackScreenProps<CatalogueStackParamList, 'JournalIssue'>;
 
 export default function JournalIssueScreen({ route }: Props) {
-  const { journalWorkId, journalTitle, institutionId, volumeTitle, issueTitle, workId } = route.params;
+  const { journalWorkId, journalTitle, institutionId, volumeTitle, issueTitle, workId, coverUrl } = route.params;
   const navigation = useNavigation<Nav>();
 
   const session = useCurrentSession();
@@ -76,9 +76,9 @@ export default function JournalIssueScreen({ route }: Props) {
       navigation.navigate('ItemDetail', {
         itemId: id,
         workType: 'article',
-        articleContext: { journalWorkId, institutionId, journalTitle, volumeTitle, issueTitle },
+        articleContext: { journalWorkId, institutionId, journalTitle, volumeTitle, issueTitle, coverUrl },
       }),
-    [navigation, journalWorkId, institutionId, journalTitle, volumeTitle, issueTitle],
+    [navigation, journalWorkId, institutionId, journalTitle, volumeTitle, issueTitle, coverUrl],
   );
 
   if (failed) {

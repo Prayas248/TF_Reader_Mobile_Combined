@@ -26,6 +26,14 @@ import type { NavLink, WorkType } from '@model/types';
  * Journal -> ... -> ItemDetail, no institution selected at all) — Library
  * membership is sign-in territory, so ItemDetailScreen skips recording it
  * rather than threading a null institutionId into `articleJournalStore`.
+ *
+ * `coverUrl` is the JOURNAL's own cover (not the article's — an article has
+ * none of its own), threaded through purely so `articleJournalStore`'s
+ * membership record can carry it — Library's Journals tab groups by journal
+ * and has no other way to reach this journal's cover for that row. Optional
+ * because `JournalScreen`'s own `resolvedCoverUrl` can itself be undefined
+ * (no `images` array on the feed) — absent here just means that row falls
+ * back to `ContentCard`'s placeholder, same as any other missing cover.
  */
 export interface ArticleContext {
   journalWorkId: string;
@@ -33,6 +41,7 @@ export interface ArticleContext {
   journalTitle: string;
   volumeTitle?: string;
   issueTitle?: string;
+  coverUrl?: string;
 }
 
 /**
@@ -107,13 +116,18 @@ export type CatalogueStackParamList = {
   // Volumes & Issues (screen 03). `volumes` is the journal's own already-
   // fetched `children` list — JournalScreen has just made this exact call, so
   // this screen makes no duplicate fetch of the same root work feed. No
-  // cover — the reference layout for this screen is a plain list, not a
-  // cover-led page.
+  // cover shown ON this screen — the reference layout is a plain list, not a
+  // cover-led page — but `coverUrl` still rides through it unrendered, same
+  // reason `journalWorkId` does: it is display data `ItemDetail`'s
+  // `articleContext` needs several screens further down, for Library's
+  // Journals tab, and this is the only place that value is in hand to
+  // forward from.
   JournalVolumes: {
     journalWorkId: string;
     journalTitle: string;
     institutionId: string | null;
     volumes: NavLink[];
+    coverUrl?: string;
   };
   // Issue Articles (screen 04's list). `workId` is the ISSUE's own work id —
   // this screen makes the one lazy getWork() call for it, same as today's
@@ -123,6 +137,7 @@ export type CatalogueStackParamList = {
   // `articleContext` needs to persist journal membership, and is a different
   // id from this screen's own `workId`. volumeTitle is absent when the
   // journal has no volume level (an issue sitting directly under the journal).
+  // `coverUrl` is the same pass-through as `JournalVolumes`'s own copy.
   JournalIssue: {
     journalWorkId: string;
     journalTitle: string;
@@ -130,6 +145,7 @@ export type CatalogueStackParamList = {
     volumeTitle?: string;
     issueTitle: string;
     workId: string;
+    coverUrl?: string;
   };
   // Personal-account (OIDC) form, reached from the access gate's "Personal
   // account" card. Registered here as well as in Profile for the same reason

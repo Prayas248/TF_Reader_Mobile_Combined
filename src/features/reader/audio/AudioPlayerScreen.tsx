@@ -51,6 +51,11 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import Loader from '@components/Loader';
 import { color, radius, space } from '@theme/tokens';
 
+import {
+  allowScreenCaptureAsync,
+  preventScreenCaptureAsync,
+  READER_CAPTURE_KEY,
+} from '@/features/reader/captureProtection';
 import { useContentLock } from '@/features/reader/useContentLock';
 import { formatDiagnosticErrorMessage } from '@/shared/contracts';
 import type { BookId } from '@/shared/contracts';
@@ -291,6 +296,20 @@ function AudioPlayerScreenComponent(
       cancelled = true;
     };
   }, [bookId]);
+
+  /**
+   * Same mitigation as `ReaderScreen.tsx`'s own capture-protection effect, and the SAME shared
+   * `READER_CAPTURE_KEY` — see `captureProtection.ts`'s header on why a second, audio-local key
+   * would risk leaking a text field on iOS during a Reader <-> Audio transition. This screen had no
+   * capture protection at all before this: unlike EPUB/PDF, audio never grew even the AppState/
+   * `isObscured` iOS mitigation, so this is a plain-per-book mount/unmount pair, no cover view.
+   */
+  useEffect(() => {
+    void preventScreenCaptureAsync(READER_CAPTURE_KEY);
+    return () => {
+      void allowScreenCaptureAsync(READER_CAPTURE_KEY);
+    };
+  }, []);
 
   // A MODULE-LEVEL SINGLETON, NOT `useAudioPlayer` — REAL-DEVICE FIX. `useAudioPlayer` (the hook)
   // auto-releases its player the moment the component that called it unmounts, which is exactly

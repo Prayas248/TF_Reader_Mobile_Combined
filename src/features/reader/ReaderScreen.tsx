@@ -67,6 +67,11 @@ import {
 } from '@/features/personalization/readerHighlights';
 import type { ReaderHighlights } from '@/features/personalization/readerHighlights';
 import { BookmarksPanel } from '@/features/reader/BookmarksPanel';
+import {
+  allowScreenCaptureAsync,
+  preventScreenCaptureAsync,
+  READER_CAPTURE_KEY,
+} from '@/features/reader/captureProtection';
 import { ReaderWebView } from '@/features/reader/ReaderWebView';
 import {
   getBookBase64,
@@ -981,6 +986,26 @@ function ReaderScreenComponent(
 
     return () => {
       subscription.remove();
+    };
+  }, []);
+
+  /**
+   * The platform-level half of the mitigation the comment above describes: Android's `FLAG_SECURE`
+   * (via `expo-screen-capture`) genuinely blocks a screenshot and the app-switcher thumbnail for as
+   * long as this screen is mounted; iOS has no equivalent block for a still screenshot (only for
+   * screen RECORDING), which is exactly why the `isObscured` cover above still carries the iOS case.
+   * The two are complementary, not redundant.
+   *
+   * MOUNT/UNMOUNT, NOT FOCUS/BLUR — this component is already keyed per-book (see this file's own
+   * prop doc), so a plain mount effect already starts/stops exactly once per book, same as
+   * `closeBook` in `tearDownAndLock`. Uses the ONE shared `READER_CAPTURE_KEY` — see
+   * `captureProtection.ts`'s own header on why a second, reader-local key would risk leaking a text
+   * field on iOS during a Reader <-> Audio transition.
+   */
+  useEffect(() => {
+    void preventScreenCaptureAsync(READER_CAPTURE_KEY);
+    return () => {
+      void allowScreenCaptureAsync(READER_CAPTURE_KEY);
     };
   }, []);
 

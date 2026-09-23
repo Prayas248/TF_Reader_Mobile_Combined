@@ -58,6 +58,11 @@ import {
 } from '@/features/personalization/readerHighlights';
 import type { ReaderHighlights } from '@/features/personalization/readerHighlights';
 import { focusOn } from '@/features/reader/a11yFocus';
+import {
+  allowScreenCaptureAsync,
+  preventScreenCaptureAsync,
+  READER_CAPTURE_KEY,
+} from '@/features/reader/captureProtection';
 import { ReaderScreen } from '@/features/reader/ReaderScreen';
 import {
   getBookBase64,
@@ -257,6 +262,18 @@ jest.mock('@/features/reader/useScreenReaderEnabled', () => ({
  */
 jest.mock('@/features/reader/a11yFocus', () => ({
   focusOn: jest.fn(),
+}));
+
+/**
+ * The screen-capture-prevention seam. Mocked because the real thing is a lazily-`require()`'d
+ * native module (`expo-screen-capture`) that throws under Jest — see `captureProtection.ts`'s own
+ * `getScreenCapture()` for why that throw is caught and degrades to a warn-and-no-op rather than an
+ * unhandled rejection, which is also why these tests can assert the CALL rather than a native effect.
+ */
+jest.mock('@/features/reader/captureProtection', () => ({
+  READER_CAPTURE_KEY: 'reader-content',
+  preventScreenCaptureAsync: jest.fn(() => Promise.resolve()),
+  allowScreenCaptureAsync: jest.fn(() => Promise.resolve()),
 }));
 
 /**
@@ -1525,6 +1542,25 @@ describe('applyAppearance — the prefs-application wiring', () => {
     __emitPrefsChange(makePrefs({ theme: 'dark' }));
 
     expect(__injectJavaScript).not.toHaveBeenCalled();
+  });
+
+  it('prevents screen capture for as long as the book is open, and re-allows it on unmount', async () => {
+    // Cleared rather than relying on a fresh mock: many earlier tests in this file mount and
+    // unmount a ReaderScreen of their own, and this file deliberately avoids a global
+    // clearAllMocks (see the note near line 2975) — so both call histories need a manual reset to
+    // isolate what THIS render/unmount pair does.
+    jest.mocked(preventScreenCaptureAsync).mockClear();
+    jest.mocked(allowScreenCaptureAsync).mockClear();
+
+    const view = await render(<ReaderScreen bookId="test-book" />);
+    await screen.findByTestId('reader-webview');
+
+    expect(preventScreenCaptureAsync).toHaveBeenCalledWith(READER_CAPTURE_KEY);
+    expect(allowScreenCaptureAsync).not.toHaveBeenCalled();
+
+    await view.unmount();
+
+    expect(allowScreenCaptureAsync).toHaveBeenCalledWith(READER_CAPTURE_KEY);
   });
 
   it("overlays the loaded font-face bytes onto customFontUri, not toReaderAppearance's own passthrough", async () => {

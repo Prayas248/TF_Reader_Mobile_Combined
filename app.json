@@ -17,8 +17,8 @@
     "android": {
       "package": "com.taylorandfrancis.tfreader.dev",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/NEXUS-logo3.png",
-        "backgroundColor": "#002244"
+        "foregroundImage": "./assets/NEXUS-logo3-adaptive.png",
+        "backgroundColor": "#FFFFFF"
       },
       "permissions": [
         "android.permission.POST_NOTIFICATIONS",
