@@ -102,8 +102,13 @@ export default function JournalScreen({ route }: Props) {
   // mount. Retry is the one path that resets them, and it runs from a press
   // handler — see `retry` below.
   const fetchRoot = useCallback(() => {
-    getCatalogueSource()
-      .getWork(institutionId, workId)
+    // Signed-out (no institution at all — PublicCatalogueScreen's own Journals section):
+    // getPublicWork, same "no institution" branch ItemDetailScreen already uses for
+    // getPublicPublication.
+    (institutionId === null
+      ? getCatalogueSource().getPublicWork(workId)
+      : getCatalogueSource().getWork(institutionId, workId)
+    )
       .then((result: WorkFeed) => {
         if (result.coverUrl !== undefined) setResolvedCoverUrl(result.coverUrl);
         setFeed(result);
@@ -127,9 +132,14 @@ export default function JournalScreen({ route }: Props) {
       navigation.navigate('ItemDetail', {
         itemId: id,
         workType: 'article',
-        articleContext: { journalWorkId: workId, institutionId, journalTitle: title },
+        articleContext: {
+          journalWorkId: workId,
+          institutionId,
+          journalTitle: title,
+          coverUrl: resolvedCoverUrl,
+        },
       }),
-    [navigation, workId, institutionId, title],
+    [navigation, workId, institutionId, title, resolvedCoverUrl],
   );
 
   const goToVolumes = useCallback(() => {
@@ -139,8 +149,9 @@ export default function JournalScreen({ route }: Props) {
       journalTitle: title,
       institutionId,
       volumes: feed.children,
+      coverUrl: resolvedCoverUrl,
     });
-  }, [navigation, feed, workId, title, institutionId]);
+  }, [navigation, feed, workId, title, institutionId, resolvedCoverUrl]);
 
   const onShare = useCallback(() => {
     void Share.share({ message: title });
@@ -165,7 +176,14 @@ export default function JournalScreen({ route }: Props) {
           cachePolicy="memory-disk"
           transition={200}
           accessibilityLabel={`${title} cover`}
-          onError={() => setCoverFailed(true)}
+          onError={(event) => {
+            // Previously silent — setCoverFailed(true) alone gives no way to tell "this URL
+            // is unreachable" apart from "the backend's presigned URL 403'd because the cover
+            // was never actually uploaded to the bucket" apart from "malformed URL". All three
+            // produce the identical placeholder with nothing in between to diagnose from.
+            console.warn('[JournalScreen] cover image failed to load', resolvedCoverUrl, event.error);
+            setCoverFailed(true);
+          }}
         />
       )}
     </View>

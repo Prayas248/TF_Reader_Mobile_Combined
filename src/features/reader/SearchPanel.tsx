@@ -25,6 +25,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 
 import Spinner from '@components/Spinner';
 import { color, radius, space } from '@theme/tokens';
@@ -96,6 +97,26 @@ export function SearchPanel({
 
   return (
     <View style={styles.panel}>
+      <View style={styles.headerRow}>
+        <View style={styles.headerTitleRow}>
+          <Ionicons name="search-outline" style={styles.headerIcon} />
+          <Text style={styles.title}>Search</Text>
+        </View>
+        {/* Named, not just "Close": three panels in this reader have a close affordance, and a
+            screen-reader user arriving at one out of visual context cannot tell which is which
+            from the word alone. The counterpart labels live in BookmarksPanel and on
+            ReaderScreen's Contents panel. Icon, not text — same circular close-button convention
+            as the Contents/Bookmarks panels now use, "one visual system" rather than a fourth. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close search"
+          onPress={onClose}
+          style={styles.closeButton}
+        >
+          <Ionicons name="close" style={styles.closeIcon} />
+        </Pressable>
+      </View>
+
       <View style={styles.inputRow}>
         <TextInput
           testID="reader-search-input"
@@ -120,21 +141,9 @@ export function SearchPanel({
           accessibilityRole="button"
           accessibilityLabel="Search"
           onPress={onSubmit}
-          style={styles.action}
+          style={styles.searchButton}
         >
-          <Text style={styles.actionText}>Search</Text>
-        </Pressable>
-        {/* Named, not just "Close": three panels in this reader have a close affordance, and a
-            screen-reader user arriving at one out of visual context cannot tell which is which
-            from the word alone. The counterpart labels live in BookmarksPanel and on
-            ReaderScreen's Contents toggle. */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close search"
-          onPress={onClose}
-          style={styles.action}
-        >
-          <Text style={styles.actionText}>Close</Text>
+          <Ionicons name="arrow-forward" style={styles.searchButtonIcon} />
         </Pressable>
       </View>
 
@@ -341,24 +350,47 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
 
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  // Same header shape as BookmarksPanel/the Contents panel — a title (with a leading icon here,
+  // since "Search" alone reads ambiguously next to Bookmarks/Contents in a screenshot, unlike
+  // those two whose icon lives one level up, in the "⋯" menu row that opens them) plus a circular
+  // close button, "one visual system" rather than three panels each inventing their own header.
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  headerIcon: { fontSize: 20, color: color.primary },
+  title: { fontSize: 18, fontWeight: '700', color: color.textPrimary },
+  closeButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.card,
+  },
+  closeIcon: { fontSize: 22, color: color.textSecondary },
+
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 12 },
   input: {
     flex: 1,
     borderWidth: 1,
     borderColor: color.border,
     borderRadius: radius.card,
-    paddingHorizontal: 10,
-    paddingVertical: space.sm,
+    backgroundColor: color.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     fontSize: 15,
     color: color.textPrimary,
   },
-  action: {
-    paddingHorizontal: 10,
-    paddingVertical: space.sm,
+  // Filled, brand-blue circle — the primary action in this row, same "solid accent for the one
+  // action that matters most" treatment the reader's other primary buttons use, rather than the
+  // same flat `color.surface` pill every secondary control gets.
+  searchButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: radius.card,
-    backgroundColor: color.surface,
+    backgroundColor: color.primary,
   },
-  actionText: { fontSize: 14, fontWeight: '700', color: color.textPrimary },
+  searchButtonIcon: { fontSize: 20, color: color.white },
 
   status: { marginTop: 10, fontSize: 13, fontWeight: '700', color: color.textPrimary },
   hint: { marginTop: 6, fontSize: 13, color: color.textSecondary },
@@ -398,13 +430,29 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
     gap: 10,
     paddingVertical: 10,
+    paddingHorizontal: space.sm,
+    borderRadius: radius.card,
     borderBottomWidth: 1,
     borderBottomColor: color.border,
   },
-  rowActive: { backgroundColor: color.surface },
-  rowOrdinal: { fontSize: 12, color: color.textSecondary, minWidth: 22 },
+  rowActive: { backgroundColor: color.surface, borderBottomColor: 'transparent' },
+  // A small round badge, not bare text — matches the ordinal treatment nowhere else in the reader
+  // needed until this list existed, but reads as a deliberate counter rather than a stray number.
+  rowOrdinal: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    textAlign: 'center',
+    lineHeight: 22,
+    fontSize: 11,
+    fontWeight: '700',
+    color: color.textSecondary,
+    backgroundColor: color.surface,
+    overflow: 'hidden',
+  },
   rowBody: { flex: 1 },
   rowSnippet: { fontSize: 14, color: color.textPrimary },
   rowUnavailable: { marginTop: 2, fontSize: 11, color: color.textSecondary },

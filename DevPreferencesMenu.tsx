@@ -56,12 +56,6 @@ import type { LayoutChangeEvent, View as RNView } from 'react-native';
 
 import { color, radius, space } from '@theme/tokens';
 
-import {
-  READER_CAPTURE_KEY,
-  allowScreenCaptureAsync,
-  isScreenCaptureAvailable,
-  preventScreenCaptureAsync,
-} from '@/features/reader/captureProtection';
 import { FONT_CATALOG } from '@/features/personalization/fontCatalog';
 import { useOverrideDeclined } from '@/features/reader/a11yOverrideChoice';
 import { flowOverrideApplied } from '@/features/reader/readerA11yLayout';
@@ -80,6 +74,18 @@ const THEME_OPTIONS: readonly { label: string; theme: Theme }[] = [
   { label: 'Dark', theme: 'dark' },
   { label: 'Sepia', theme: 'sepia' },
 ];
+
+// Visual only — the SWATCH each Theme row card previews, styled after Apple Books' own "Aa" theme
+// cards (Original/Quiet/Paper/etc.). No new capability: still the same three `Theme` values above,
+// just each rendered as a small preview of what the page will actually look like instead of a plain
+// text pill.
+const THEME_SWATCH_STYLE: Record<Theme, { bg: string; fg: string }> = {
+  light: { bg: '#FFFFFF', fg: '#1C1C1E' },
+  dark: { bg: '#1C1C1E', fg: '#FFFFFF' },
+  sepia: { bg: '#F2E7D3', fg: '#4A3826' },
+  system: { bg: '#FFFFFF', fg: '#1C1C1E' },
+  highContrast: { bg: '#000000', fg: '#FFFF00' },
+};
 
 /** Pressing the currently-active theme reverts to `'system'` (DEFAULT_PREFS.theme); pressing a
  * different one switches to it. Never leaves the segmented control able to select nothing. */
@@ -265,24 +271,29 @@ function ZoomSlider({
   value: number;
   onCommit: (value: number) => void;
 }): React.JSX.Element {
+  const trackRef = useRef<RNView>(null);
   const [trackWidth, setTrackWidth] = useState(0);
+  // Screen-absolute X of the track's own left edge — see `handleTrackLayout`'s own comment for
+  // why the drag math needs this instead of `nativeEvent.locationX`.
+  const [trackPageX, setTrackPageX] = useState(0);
   const [dragValue, setDragValue] = useState<number | null>(null);
 
-  // Closes over `trackWidth`/`value` directly (plain render-scope variables, not refs) rather than
-  // the ref-sync-in-an-effect idiom used elsewhere in this codebase (e.g. ReaderScreen's
-  // appearanceEnvRef) — the newer react-hooks/refs lint rule flags a ref read reachable from a
-  // value constructed during render, which PanResponder.create's callbacks would be. Recreating
-  // this per `[trackWidth, value]` change is cheap and, since neither changes mid-drag (trackWidth
-  // only changes on layout/rotation, and `value` only changes when THIS component's own onCommit
-  // below fires, i.e. after a drag ends), the PanResponder's identity is stable for the lifetime of
-  // any single gesture — recreating it mid-touch is what would risk dropping the gesture, not this.
-  const valueFromX = useCallback(
-    (x: number): number => {
+  // Closes over `trackWidth`/`trackPageX`/`value` directly (plain render-scope variables, not
+  // refs) rather than the ref-sync-in-an-effect idiom used elsewhere in this codebase (e.g.
+  // ReaderScreen's appearanceEnvRef) — the newer react-hooks/refs lint rule flags a ref read
+  // reachable from a value constructed during render, which PanResponder.create's callbacks would
+  // be. Recreating this per change is cheap and, since none of the three changes mid-drag
+  // (trackWidth/trackPageX only change on layout/rotation, and `value` only changes when THIS
+  // component's own onCommit below fires, i.e. after a drag ends), the PanResponder's identity is
+  // stable for the lifetime of any single gesture — recreating it mid-touch is what would risk
+  // dropping the gesture, not this.
+  const valueFromPageX = useCallback(
+    (pageX: number): number => {
       if (trackWidth <= 0) return value;
-      const ratio = clamp(x / trackWidth, 0, 1);
+      const ratio = clamp((pageX - trackPageX) / trackWidth, 0, 1);
       return snapToZoomStep(ZOOM_MIN + ratio * (ZOOM_MAX - ZOOM_MIN));
     },
-    [trackWidth, value],
+    [trackWidth, trackPageX, value],
   );
 
   const panResponder = useMemo(
@@ -291,10 +302,10 @@ function ZoomSlider({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderMove: (evt) => {
-          setDragValue(valueFromX(evt.nativeEvent.locationX));
+          setDragValue(valueFromPageX(evt.nativeEvent.pageX));
         },
         onPanResponderRelease: (evt) => {
-          const next = valueFromX(evt.nativeEvent.locationX);
+          const next = valueFromPageX(evt.nativeEvent.pageX);
           setDragValue(null);
           onCommit(next);
         },
@@ -302,11 +313,24 @@ function ZoomSlider({
           setDragValue(null);
         },
       }),
-    [valueFromX, onCommit],
+    [valueFromPageX, onCommit],
   );
 
+  // `nativeEvent.pageX` (screen-absolute), NOT `locationX` — this was the "slider jumps around
+  // and picks a near-random value mid-drag" bug. `locationX` is reported relative to whichever
+  // VIEW the touch is natively over at that instant, and this track is not a bare rectangle: the
+  // thumb and (on the other sliders) tick marks are absolutely-positioned SIBLINGS stacked on top
+  // of it, each its own native view. As a dragging finger crosses from bare track onto the thumb
+  // (or a tick), the same physical finger position gets reported as a DIFFERENT `locationX` —
+  // relative to that child's own origin instead of the track's — so the computed value jumps
+  // exactly at those boundaries instead of following the finger continuously. `pageX` is
+  // screen-absolute regardless of which child the touch natively targets, so subtracting the
+  // track's OWN screen position (`trackPageX`, captured once via `measureInWindow` on layout,
+  // the same one-shot-measurement idiom `DevPreferencesMenu`'s own dropdown anchor uses) gives a
+  // value relative to the track that stays consistent for the whole gesture.
   const handleTrackLayout = useCallback((event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);
+    trackRef.current?.measureInWindow((x) => setTrackPageX(x));
   }, []);
 
   const displayValue = dragValue ?? value;
@@ -316,7 +340,12 @@ function ZoomSlider({
   return (
     <View>
       <Text style={styles.zoomValue}>{Math.round(displayValue * 100)}%</Text>
-      <View style={styles.zoomTrack} onLayout={handleTrackLayout} {...panResponder.panHandlers}>
+      <View
+        ref={trackRef}
+        style={styles.zoomTrack}
+        onLayout={handleTrackLayout}
+        {...panResponder.panHandlers}
+      >
         <View style={styles.zoomTrackBase} />
         <View style={[styles.zoomTrackFill, { width: `${ratio * 100}%` }]} />
         <View
@@ -357,16 +386,19 @@ function FontSizeSlider({
   value: number;
   onCommit: (value: number) => void;
 }): React.JSX.Element {
+  const trackRef = useRef<RNView>(null);
   const [trackWidth, setTrackWidth] = useState(0);
+  // See ZoomSlider's `handleTrackLayout` for why this, not `locationX`, is what the drag math uses.
+  const [trackPageX, setTrackPageX] = useState(0);
   const [dragValue, setDragValue] = useState<number | null>(null);
 
-  const valueFromX = useCallback(
-    (x: number): number => {
+  const valueFromPageX = useCallback(
+    (pageX: number): number => {
       if (trackWidth <= 0) return value;
-      const ratio = clamp(x / trackWidth, 0, 1);
+      const ratio = clamp((pageX - trackPageX) / trackWidth, 0, 1);
       return snapToFontSizeStep(FONT_SIZE_MIN + ratio * (FONT_SIZE_MAX - FONT_SIZE_MIN));
     },
-    [trackWidth, value],
+    [trackWidth, trackPageX, value],
   );
 
   const panResponder = useMemo(
@@ -375,22 +407,39 @@ function FontSizeSlider({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderMove: (evt) => {
-          setDragValue(valueFromX(evt.nativeEvent.locationX));
+          setDragValue(valueFromPageX(evt.nativeEvent.pageX));
         },
         onPanResponderRelease: (evt) => {
-          const next = valueFromX(evt.nativeEvent.locationX);
-          setDragValue(null);
+          const next = valueFromPageX(evt.nativeEvent.pageX);
+          // Keep showing `next`, NOT the stale `value` prop, until it actually catches up (the
+          // render-time check below clears it then — see that check's own comment). `onCommit`
+          // persists asynchronously; clearing dragValue here instead used to fall back to the old
+          // `value` for one paint, then jump to `next` once the async write resolved and
+          // prefsStore's subscribe fired — a visible revert-then-jump on every single release,
+          // which is what "glitching" was.
+          setDragValue(next);
           onCommit(next);
         },
         onPanResponderTerminate: () => {
           setDragValue(null);
         },
       }),
-    [valueFromX, onCommit],
+    [valueFromPageX, onCommit],
   );
+
+  // Adjusting state during render rather than in an effect — react.dev's "You Might Not Need an
+  // Effect" names exactly this shape ("adjusting some state when a prop changes") as the preferred
+  // form: React discards this render and re-renders synchronously with `dragValue` already cleared
+  // before anything paints, where an effect would paint the stale render first and correct it one
+  // frame later. Safe from a loop: this only fires while dragValue is non-null and equal to the
+  // now-caught-up value, and clearing it makes the condition false on the very next render.
+  if (dragValue !== null && value === dragValue) {
+    setDragValue(null);
+  }
 
   const handleTrackLayout = useCallback((event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);
+    trackRef.current?.measureInWindow((x) => setTrackPageX(x));
   }, []);
 
   const displayValue = dragValue ?? value;
@@ -402,7 +451,12 @@ function FontSizeSlider({
   return (
     <View style={styles.fontSizeSlider}>
       <Text style={styles.zoomValue}>{Math.round(displayValue)}pt</Text>
-      <View style={styles.zoomTrack} onLayout={handleTrackLayout} {...panResponder.panHandlers}>
+      <View
+        ref={trackRef}
+        style={styles.zoomTrack}
+        onLayout={handleTrackLayout}
+        {...panResponder.panHandlers}
+      >
         <View style={styles.zoomTrackBase} />
         <View style={[styles.zoomTrackFill, { width: `${ratio * 100}%` }]} />
         <View
@@ -451,16 +505,19 @@ function LineHeightSlider({
   value: number;
   onCommit: (value: number) => void;
 }): React.JSX.Element {
+  const trackRef = useRef<RNView>(null);
   const [trackWidth, setTrackWidth] = useState(0);
+  // See ZoomSlider's `handleTrackLayout` for why this, not `locationX`, is what the drag math uses.
+  const [trackPageX, setTrackPageX] = useState(0);
   const [dragValue, setDragValue] = useState<number | null>(null);
 
-  const valueFromX = useCallback(
-    (x: number): number => {
+  const valueFromPageX = useCallback(
+    (pageX: number): number => {
       if (trackWidth <= 0) return value;
-      const ratio = clamp(x / trackWidth, 0, 1);
+      const ratio = clamp((pageX - trackPageX) / trackWidth, 0, 1);
       return snapToLineHeightStep(LINE_HEIGHT_MIN + ratio * (LINE_HEIGHT_MAX - LINE_HEIGHT_MIN));
     },
-    [trackWidth, value],
+    [trackWidth, trackPageX, value],
   );
 
   const panResponder = useMemo(
@@ -469,10 +526,10 @@ function LineHeightSlider({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderMove: (evt) => {
-          setDragValue(valueFromX(evt.nativeEvent.locationX));
+          setDragValue(valueFromPageX(evt.nativeEvent.pageX));
         },
         onPanResponderRelease: (evt) => {
-          const next = valueFromX(evt.nativeEvent.locationX);
+          const next = valueFromPageX(evt.nativeEvent.pageX);
           setDragValue(null);
           onCommit(next);
         },
@@ -480,11 +537,12 @@ function LineHeightSlider({
           setDragValue(null);
         },
       }),
-    [valueFromX, onCommit],
+    [valueFromPageX, onCommit],
   );
 
   const handleTrackLayout = useCallback((event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);
+    trackRef.current?.measureInWindow((x) => setTrackPageX(x));
   }, []);
 
   const displayValue = dragValue ?? value;
@@ -496,7 +554,12 @@ function LineHeightSlider({
   return (
     <View style={styles.fontSizeSlider}>
       <Text style={styles.zoomValue}>{displayValue.toFixed(1)}×</Text>
-      <View style={styles.zoomTrack} onLayout={handleTrackLayout} {...panResponder.panHandlers}>
+      <View
+        ref={trackRef}
+        style={styles.zoomTrack}
+        onLayout={handleTrackLayout}
+        {...panResponder.panHandlers}
+      >
         <View style={styles.zoomTrackBase} />
         <View style={[styles.zoomTrackFill, { width: `${ratio * 100}%` }]} />
         {stepTickRatios(LINE_HEIGHT_MIN, LINE_HEIGHT_MAX, LINE_HEIGHT_STEP).map((tickRatio) => (
@@ -546,18 +609,21 @@ function LetterSpacingSlider({
   value: number;
   onCommit: (value: number) => void;
 }): React.JSX.Element {
+  const trackRef = useRef<RNView>(null);
   const [trackWidth, setTrackWidth] = useState(0);
+  // See ZoomSlider's `handleTrackLayout` for why this, not `locationX`, is what the drag math uses.
+  const [trackPageX, setTrackPageX] = useState(0);
   const [dragValue, setDragValue] = useState<number | null>(null);
 
-  const valueFromX = useCallback(
-    (x: number): number => {
+  const valueFromPageX = useCallback(
+    (pageX: number): number => {
       if (trackWidth <= 0) return value;
-      const ratio = clamp(x / trackWidth, 0, 1);
+      const ratio = clamp((pageX - trackPageX) / trackWidth, 0, 1);
       return snapToLetterSpacingStep(
         LETTER_SPACING_MIN + ratio * (LETTER_SPACING_MAX - LETTER_SPACING_MIN),
       );
     },
-    [trackWidth, value],
+    [trackWidth, trackPageX, value],
   );
 
   const panResponder = useMemo(
@@ -566,10 +632,10 @@ function LetterSpacingSlider({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderMove: (evt) => {
-          setDragValue(valueFromX(evt.nativeEvent.locationX));
+          setDragValue(valueFromPageX(evt.nativeEvent.pageX));
         },
         onPanResponderRelease: (evt) => {
-          const next = valueFromX(evt.nativeEvent.locationX);
+          const next = valueFromPageX(evt.nativeEvent.pageX);
           setDragValue(null);
           onCommit(next);
         },
@@ -577,11 +643,12 @@ function LetterSpacingSlider({
           setDragValue(null);
         },
       }),
-    [valueFromX, onCommit],
+    [valueFromPageX, onCommit],
   );
 
   const handleTrackLayout = useCallback((event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);
+    trackRef.current?.measureInWindow((x) => setTrackPageX(x));
   }, []);
 
   const displayValue = dragValue ?? value;
@@ -593,7 +660,12 @@ function LetterSpacingSlider({
   return (
     <View style={styles.fontSizeSlider}>
       <Text style={styles.zoomValue}>{displayValue.toFixed(1)}px</Text>
-      <View style={styles.zoomTrack} onLayout={handleTrackLayout} {...panResponder.panHandlers}>
+      <View
+        ref={trackRef}
+        style={styles.zoomTrack}
+        onLayout={handleTrackLayout}
+        {...panResponder.panHandlers}
+      >
         <View style={styles.zoomTrackBase} />
         <View style={[styles.zoomTrackFill, { width: `${ratio * 100}%` }]} />
         {stepTickRatios(LETTER_SPACING_MIN, LETTER_SPACING_MAX, LETTER_SPACING_STEP).map(
@@ -644,16 +716,19 @@ function PageMarginsSlider({
   value: number;
   onCommit: (value: number) => void;
 }): React.JSX.Element {
+  const trackRef = useRef<RNView>(null);
   const [trackWidth, setTrackWidth] = useState(0);
+  // See ZoomSlider's `handleTrackLayout` for why this, not `locationX`, is what the drag math uses.
+  const [trackPageX, setTrackPageX] = useState(0);
   const [dragValue, setDragValue] = useState<number | null>(null);
 
-  const valueFromX = useCallback(
-    (x: number): number => {
+  const valueFromPageX = useCallback(
+    (pageX: number): number => {
       if (trackWidth <= 0) return value;
-      const ratio = clamp(x / trackWidth, 0, 1);
+      const ratio = clamp((pageX - trackPageX) / trackWidth, 0, 1);
       return snapToMarginsStep(MARGINS_MIN + ratio * (MARGINS_MAX - MARGINS_MIN));
     },
-    [trackWidth, value],
+    [trackWidth, trackPageX, value],
   );
 
   const panResponder = useMemo(
@@ -662,10 +737,10 @@ function PageMarginsSlider({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderMove: (evt) => {
-          setDragValue(valueFromX(evt.nativeEvent.locationX));
+          setDragValue(valueFromPageX(evt.nativeEvent.pageX));
         },
         onPanResponderRelease: (evt) => {
-          const next = valueFromX(evt.nativeEvent.locationX);
+          const next = valueFromPageX(evt.nativeEvent.pageX);
           setDragValue(null);
           onCommit(next);
         },
@@ -673,11 +748,12 @@ function PageMarginsSlider({
           setDragValue(null);
         },
       }),
-    [valueFromX, onCommit],
+    [valueFromPageX, onCommit],
   );
 
   const handleTrackLayout = useCallback((event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);
+    trackRef.current?.measureInWindow((x) => setTrackPageX(x));
   }, []);
 
   const displayValue = dragValue ?? value;
@@ -688,7 +764,12 @@ function PageMarginsSlider({
   return (
     <View style={styles.fontSizeSlider}>
       <Text style={styles.zoomValue}>{Math.round(displayValue)}px</Text>
-      <View style={styles.zoomTrack} onLayout={handleTrackLayout} {...panResponder.panHandlers}>
+      <View
+        ref={trackRef}
+        style={styles.zoomTrack}
+        onLayout={handleTrackLayout}
+        {...panResponder.panHandlers}
+      >
         <View style={styles.zoomTrackBase} />
         <View style={[styles.zoomTrackFill, { width: `${ratio * 100}%` }]} />
         {stepTickRatios(MARGINS_MIN, MARGINS_MAX, MARGINS_STEP).map((tickRatio) => (
@@ -870,11 +951,15 @@ export function DevPreferencesMenu({ format }: DevPreferencesMenuProps): React.J
       <Pressable
         ref={buttonRef}
         accessibilityRole="button"
-        accessibilityLabel={open ? 'Close preferences menu' : 'Open preferences menu'}
+        accessibilityLabel={open ? 'Close reading appearance' : 'Reading appearance'}
         onPress={toggleOpen}
         style={styles.menuButton}
       >
-        <Text style={styles.menuIcon}>☰</Text>
+        {/* "Aa" is the reading-app convention for "appearance" (theme, font, size) — Apple Books,
+            Kindle and most other readers use this exact glyph rather than an icon, because there
+            is no universal icon for "text appearance". A real Text string, not an Ionicons name —
+            there is no icon in that set for this concept either. */}
+        <Text style={styles.menuIcon}>Aa</Text>
       </Pressable>
 
       {/* Guarded on `prefs` exactly like the old `{open && prefs && (...)}` was, so nothing inside
@@ -910,9 +995,10 @@ export function DevPreferencesMenu({ format }: DevPreferencesMenuProps): React.J
             ]}
           >
           <Text style={styles.sectionLabel}>Theme</Text>
-          <View style={styles.row}>
+          <View style={styles.themeRow}>
             {THEME_OPTIONS.map(({ label, theme }) => {
               const active = prefs.theme === theme;
+              const swatch = THEME_SWATCH_STYLE[theme];
               return (
                 <Pressable
                   key={theme}
@@ -922,11 +1008,19 @@ export function DevPreferencesMenu({ format }: DevPreferencesMenuProps): React.J
                   onPress={() => {
                     void prefsStore.savePrefs(toggleTheme(prefs, theme));
                   }}
-                  style={[styles.toggle, active && styles.toggleActive]}
+                  style={[
+                    styles.themeSwatch,
+                    { backgroundColor: swatch.bg },
+                    active && styles.themeSwatchActive,
+                  ]}
                 >
-                  <Text style={[styles.toggleLabel, active && styles.toggleLabelActive]}>
-                    {label}
-                  </Text>
+                  <Text style={[styles.themeSwatchAa, { color: swatch.fg }]}>Aa</Text>
+                  <Text style={[styles.themeSwatchLabel, { color: swatch.fg }]}>{label}</Text>
+                  {active && (
+                    <View style={styles.themeSwatchCheck}>
+                      <Text style={styles.themeSwatchCheckText}>✓</Text>
+                    </View>
+                  )}
                 </Pressable>
               );
             })}
@@ -1062,57 +1156,6 @@ export function DevPreferencesMenu({ format }: DevPreferencesMenuProps): React.J
             </>
           )}
 
-          {/* TEMP — delete with the rest of this file once a real settings screen lands. Exists
-              ONLY to trigger the Week-4 Item 1 (screenshot restriction) device spike by hand: there
-              is no other way to call `preventScreenCaptureAsync` on a device yet, since wiring it
-              into ReaderScreen's real focus/blur lifecycle is Phase 1.4, deliberately deferred until
-              after this spike passes. `READER_CAPTURE_KEY` (captureProtection.ts) is the SAME single
-              key Phase 1.3's hook will use — the B3 finding is exactly that two different keys can
-              corrupt iOS's native layer state, so this spike has to exercise the real key, not a
-              throwaway string, or a pass here would not mean anything once 1.4 wires the real hook
-              in. */}
-          <Text style={styles.sectionLabel}>Screen Capture Spike</Text>
-          <View style={styles.row}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                if (!isScreenCaptureAvailable()) {
-                  Alert.alert(
-                    'Native Module Unavailable',
-                    'ExpoScreenCapture is not linked in this binary. Run `npx expo run:ios` or `npx expo run:android` to rebuild with native modules.'
-                  );
-                  return;
-                }
-                void preventScreenCaptureAsync(READER_CAPTURE_KEY);
-              }}
-              style={styles.toggle}
-            >
-              <Text style={styles.toggleLabel}>Prevent</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                if (!isScreenCaptureAvailable()) {
-                  Alert.alert(
-                    'Native Module Unavailable',
-                    'ExpoScreenCapture is not linked in this binary. Run `npx expo run:ios` or `npx expo run:android` to rebuild with native modules.'
-                  );
-                  return;
-                }
-                void allowScreenCaptureAsync(READER_CAPTURE_KEY);
-              }}
-              style={styles.toggle}
-            >
-              <Text style={styles.toggleLabel}>Allow</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => Alert.alert('Spike test', 'Dismiss me, then check capture state')}
-              style={styles.toggle}
-            >
-              <Text style={styles.toggleLabel}>Show Alert</Text>
-            </Pressable>
-          </View>
           </View>
         </Modal>
       )}
@@ -1132,7 +1175,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radius.card,
   },
-  menuIcon: { fontSize: 22, color: color.textPrimary },
+  // `color.white`, not `color.textPrimary`: this button sits inside ReaderScreen's own dark-navy
+  // toolbar (its `toolbarExtra` slot, matching every other icon there) — this was a real,
+  // invisible-against-its-own-background bug, not a style preference, left over from when that
+  // toolbar was still a light background.
+  menuIcon: { fontSize: 17, fontWeight: '700', color: color.white },
 
   // Matches the visual weight of a `disabled` Pressable elsewhere in the reader (ReaderScreen's
   // Prev/Next), so a row the screen-reader override has taken over reads as unavailable rather than
@@ -1164,12 +1211,14 @@ const styles = StyleSheet.create({
     // it stays correct across phone/tablet widths and portrait/landscape instead of a guessed
     // constant. This is only the pre-measurement/test-renderer fallback, same reasoning as the
     // `top: 48, right: 0` above it.
-    minWidth: 220,
-    backgroundColor: color.white,
-    borderRadius: radius.tile,
+    minWidth: 260,
+    // The app's own "bluish white" card colour (`color.surface`), not a bespoke dark palette —
+    // this dropdown follows the same card/surface convention every other panel in the app uses.
+    backgroundColor: color.surface,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: color.border,
-    padding: 12,
+    padding: 16,
     // RN's boxShadow is iOS/Android-agnostic as of RN 0.76+; elevation is the Android fallback for
     // engines that ignore it. Indigo (`color.navy`) rather than plain black, matching the elevation
     // shadows the shared component library already uses.
@@ -1184,7 +1233,7 @@ const styles = StyleSheet.create({
     color: color.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: 6,
+    marginBottom: 8,
   },
   // Distinguishes the three typography sliders from each other under one shared "Typography"
   // section label — smaller and not uppercased, so it doesn't compete with sectionLabel above it.
@@ -1200,7 +1249,37 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     fontStyle: 'italic',
   },
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: 12 },
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: 14 },
+
+  // The Theme section's own grid — three square swatch cards, one per Apple-Books-style preview,
+  // rather than the plain text pills every other section still uses (see `row`/`toggle` below).
+  themeRow: { flexDirection: 'row', gap: space.sm, marginBottom: 16 },
+  themeSwatch: {
+    flex: 1,
+    aspectRatio: 0.88,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  // White ring, same idiom Apple's own selected swatch uses — a border rather than a checkmark
+  // alone, so the active card is identifiable at a glance, not just on close inspection.
+  themeSwatchActive: { borderColor: '#FFFFFF' },
+  themeSwatchAa: { fontSize: 22, fontWeight: '600', marginBottom: 4 },
+  themeSwatchLabel: { fontSize: 11, fontWeight: '600' },
+  themeSwatchCheck: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#0A84FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  themeSwatchCheckText: { fontSize: 9, fontWeight: '700', color: '#FFFFFF' },
 
   toggle: {
     paddingHorizontal: 14,

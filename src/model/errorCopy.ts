@@ -72,6 +72,7 @@ export const WIRE_ERROR_COPY: Record<ErrorCode, string> = {
   FORBIDDEN_SCOPE: "This action isn't permitted for your account.",
   INSTITUTION_INACTIVE: "Your institution's access is currently inactive.",
   TOO_MANY_IDS: 'Something went wrong loading these items. Please try again.',
+  SERVICE_UNAVAILABLE: 'This is taking longer than it should. Please try again in a moment.',
 };
 
 // Auth and entitlement codes are informational — nothing about pressing Retry
@@ -99,6 +100,9 @@ export const WIRE_ERROR_VARIANT: Record<ErrorCode, ErrorStateVariant> = {
   FORBIDDEN_SCOPE: 'access_restricted',
   INSTITUTION_INACTIVE: 'access_restricted',
   TOO_MANY_IDS: 'not_ready',
+  // Transient infrastructure blip, not an access or data problem — 'not_ready' is the same
+  // "retry, nothing about this is permanent" bucket TIMEOUT-shaped codes already use.
+  SERVICE_UNAVAILABLE: 'not_ready',
 };
 
 export function wireErrorVariant(code: ErrorCode): ErrorStateVariant {

@@ -119,7 +119,13 @@ export class ApiLicenceClient implements LicenceSource {
     // flambeau's own instruction is to hand `nextCursor` back unparsed, so it is
     // encoded and forwarded exactly as received.
     const query = since === undefined ? '' : `?since=${encodeURIComponent(since)}`;
-    const body = await this.send('GET', `/api/v1/loans/changes${query}`);
+    // Was `/api/v1/loans/changes` — the backend actually serves this at `/api/v1/changes`
+    // (library.controller.ChangesController's own PATH constant). The wrong path doesn't 401 or
+    // hit this app's own error handling at all — Spring's unmapped-route handler answers with a
+    // real 404 whose body still has a `code: "NOT_FOUND"` field, so it looked like a normal,
+    // well-formed refusal instead of a dead route. Every call to getChanges() 404'd silently
+    // until offerPolling.ts started logging refusals loudly enough to notice.
+    const body = await this.send('GET', `/api/v1/changes${query}`);
     return normalizeChanges(body);
   }
 

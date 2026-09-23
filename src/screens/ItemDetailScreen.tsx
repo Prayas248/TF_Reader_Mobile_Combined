@@ -62,6 +62,7 @@ import { SectionHeader } from '@components/SectionHeader';
 import { getCatalogueSource } from '@config/catalogue';
 import { getLicenceSource } from '@config/licence';
 import { borrowOrPlaceHold, queuePositionLabel, queueProgressFraction } from '@/licence/queueRequest';
+import { DownloadFailure } from '@/features/download/errors';
 import { openBook } from '@/features/download/openBook';
 import { useDownloadProgress } from '@/features/download/useDownloadProgress';
 import { useNetworkStatus } from '@hooks/useNetworkStatus';
@@ -76,6 +77,7 @@ import { formatPublishedDate } from '@model/formatPublishedDate';
 import { useDownloadStore } from '@store/downloadStore';
 import { useInstitutionStore } from '@store/institutionStore';
 import { useLibraryStore } from '@store/libraryStore';
+import { useOfferStore } from '@store/offerStore';
 import { useArticleJournalStore } from '@store/articleJournalStore';
 import { useRecentlyViewedStore } from '@store/recentlyViewedStore';
 import { color, elevation, radius, space, type as typeScale } from '@theme/tokens';
@@ -110,10 +112,13 @@ interface ItemDetailRouteProps {
   // entirely — the title tracks navigation history, not content.
   navigation: {
     navigate(screen: 'AccessGate', params: { itemId: string; title: string; authors: string }): void;
-    navigate(screen: 'Reader', params: { bookId: BookId; format: ContentFormat }): void;
+    navigate(
+      screen: 'Reader',
+      params: { bookId: BookId; format: ContentFormat; title?: string },
+    ): void;
     // AUDIO's own destination — see `handleAction`'s 'read'/'play' branch for
     // why this is a second overload rather than folding into 'Reader' above.
-    navigate(screen: 'AudioPlayer', params: { bookId: BookId; title: string }): void;
+    navigate(screen: 'AudioPlayer', params: { bookId: BookId; title: string; coverUrl?: string }): void;
     getParent: () =>
       | { setOptions: (options: { tabBarStyle?: { display: 'none' } }) => void }
       | undefined;
@@ -140,6 +145,16 @@ const COVER_HEIGHT = space.xl * 9;
 
 const GENERIC_MESSAGE = "We couldn't load this title.";
 const LICENCE_GENERIC_MESSAGE = "That action couldn't be completed. Please try again.";
+
+// Copy for every LicenceError that ISN'T REFUSED (REFUSED reads from WIRE_ERROR_COPY,
+// keyed on flambeau's own errorCode instead). Before this map existed, a TIMEOUT or
+// NETWORK_UNAVAILABLE fell through runLicenceCall's catch with no message set at all —
+// the button spun, stopped, and nothing told the reader anything happened. Same wording
+// style as CATALOGUE_ERROR_COPY for consistency across the app.
+const LICENCE_TRANSPORT_ERROR_COPY: Partial<Record<LicenceError, string>> = {
+  [LicenceError.NETWORK_UNAVAILABLE]: 'You appear to be offline. Please check your connection and try again.',
+  [LicenceError.TIMEOUT]: 'This took too long to respond. Please try again.',
+};
 
 
 // Screen 05's presentation. Exported for the same reason `renderArticleContent`
@@ -806,8 +821,14 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
         // downloading/borrowing/bookmarking it — see that store's own header
         // for why Library intersects this against those three instead of a
         // fourth "read" concept.
-        if (articleContext !== undefined) {
-          useArticleJournalStore.getState().recordMembership(itemId, articleContext);
+        // institutionId === null is the signed-out drill-down (no institution at all) — Library
+        // membership is sign-in territory, so this skips recording rather than threading a null
+        // institutionId into articleJournalStore.
+        if (articleContext !== undefined && articleContext.institutionId !== null) {
+          useArticleJournalStore.getState().recordMembership(itemId, {
+            ...articleContext,
+            institutionId: articleContext.institutionId,
+          });
         }
       })
       .catch((err: unknown) => {
@@ -889,7 +910,8 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
         // Caught before the refresh so a failed call still invalidates the cache
         // — a borrow that threw may still have created the loan.
         .catch((err: unknown) => {
-          if (isLicenceFailure(err) && err.code === LicenceError.REFUSED) {
+          if (!isLicenceFailure(err)) return;
+          if (err.code === LicenceError.REFUSED) {
             const knownCode =
               err.errorCode !== undefined &&
               (ERROR_CODES as readonly string[]).includes(err.errorCode)
@@ -898,7 +920,13 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
             setLicenceMessage(
               knownCode !== undefined ? WIRE_ERROR_COPY[knownCode] : LICENCE_GENERIC_MESSAGE,
             );
+            return;
           }
+          // Previously: nothing. TIMEOUT and NETWORK_UNAVAILABLE fell through with no
+          // message set — the button spun, stopped, and the tap looked like it did
+          // nothing at all. Every other LicenceError (MALFORMED_RESPONSE, NOT_OURS_YET)
+          // gets the same generic retry copy REFUSED's unknown-code case already used.
+          setLicenceMessage(LICENCE_TRANSPORT_ERROR_COPY[err.code] ?? LICENCE_GENERIC_MESSAGE);
         })
         .then(() => refresh())
         .catch(() => {})
@@ -962,14 +990,36 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
             // an audiobook into 'Reader' fed it content the WebView bridge
             // cannot parse.
             if (format === 'AUDIO') {
-              navigation.navigate('AudioPlayer', { bookId: itemId as BookId, title: detail.title });
+              navigation.navigate('AudioPlayer', { bookId: itemId as BookId, title: detail.title, coverUrl: detail.coverUrl });
             } else {
-              navigation.navigate('Reader', { bookId: itemId as BookId, format });
+              navigation.navigate('Reader', { bookId: itemId as BookId, format, title: detail.title });
             }
           })
           .catch((err: unknown) => {
-            console.error('[read] openBook failed:', err);
-            setLicenceMessage(LICENCE_GENERIC_MESSAGE);
+            // `.cause` logged explicitly, not just `err` — DownloadFailure's own message is only
+            // ever "CODE for bookId" (see its constructor), so the default console rendering of
+            // the error alone hides the ONE thing that actually explains a generic
+            // SESSION_FETCH_FAILED/LOAN_FAILED: whether it was a timed-out fetch, an unmapped
+            // server error code, or something else — exactly the ambiguity that made this take
+            // multiple rounds to diagnose once already.
+            console.error(
+              '[read] openBook failed:',
+              err,
+              err instanceof DownloadFailure ? { code: err.code, cause: err.cause } : undefined,
+            );
+            // Previously: every openBook failure, including DEVICE_LIMIT_REACHED, collapsed to
+            // the same generic "try again" — a reader at their device cap retried forever with
+            // no way to tell what was actually wrong. DownloadFailure's code is a DownloadError,
+            // whose members are named identically to ErrorCode wherever the two overlap (see
+            // features/download/errors.ts), so a lookup against WIRE_ERROR_COPY finds it directly.
+            const knownCode =
+              err instanceof DownloadFailure &&
+              (ERROR_CODES as readonly string[]).includes(err.code)
+                ? (err.code as unknown as ErrorCode)
+                : undefined;
+            setLicenceMessage(
+              knownCode !== undefined ? WIRE_ERROR_COPY[knownCode] : LICENCE_GENERIC_MESSAGE,
+            );
           })
           .finally(() => {
             void refresh();
@@ -986,10 +1036,17 @@ export default function ItemDetailScreen({ route, navigation }: ItemDetailRouteP
         runLicenceCall(action, () => borrowOrPlaceHold(source, itemId));
       } else if (action === 'acceptOffer' && hold?.holdId !== undefined) {
         const holdId = hold.holdId;
-        runLicenceCall(action, () => source.acceptOffer(holdId));
+        // .then().clear() here, not inside runLicenceCall: clearing is only correct for the
+        // two offer actions. runLicenceCall is shared by all four licence calls, and a global
+        // "clear the current offer" after e.g. a successful `grantAccess` on a DIFFERENT title
+        // would dismiss a live, still-valid offer banner for whatever this reader was actually
+        // queued for elsewhere. Without this at all, QueueNotificationHost's banner kept
+        // offering an already-consumed copy until its own expiry — see LibraryScreen.tsx's
+        // identical fix, the other place this same LicenceSource action is reachable from.
+        runLicenceCall(action, () => source.acceptOffer(holdId).then(() => useOfferStore.getState().clear()));
       } else if (action === 'rejectOffer' && hold?.holdId !== undefined) {
         const holdId = hold.holdId;
-        runLicenceCall(action, () => source.cancelHold(holdId));
+        runLicenceCall(action, () => source.cancelHold(holdId).then(() => useOfferStore.getState().clear()));
       }
     },
     [navigation, detail, itemId, loan, hold, pendingAction, runLicenceCall, downloadProgress, refresh],

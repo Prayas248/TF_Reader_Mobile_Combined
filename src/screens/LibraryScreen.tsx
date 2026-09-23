@@ -167,6 +167,7 @@ import { type DownloadRecord, useDownloadStore } from '@store/downloadStore';
 import { useExpiredDownloadsStore } from '@store/expiredDownloadsStore';
 import { useExpiredLoansStore } from '@store/expiredLoansStore';
 import { useLibraryStore } from '@store/libraryStore';
+import { useOfferStore } from '@store/offerStore';
 import { color, radius, space, type } from '@theme/tokens';
 
 import {
@@ -178,6 +179,7 @@ import {
   downloadedLabel,
   downloadsSummaryLabel,
   dueLabel,
+  eliteExpiresLabel,
   groupArticlesByJournal,
   groupBookmarksByTitle,
   mergeContentItems,
@@ -257,9 +259,17 @@ interface LibraryScreenProps {
     // reader wired behind it.
     navigate(
       screen: 'Reader',
-      params: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTargetLike },
+      params: {
+        bookId: BookId;
+        format: ContentFormat;
+        title?: string;
+        initialTarget?: ReaderTargetLike;
+      },
     ): void;
-    navigate(screen: 'AudioPlayer', params: { bookId: BookId; title: string }): void;
+    navigate(
+      screen: 'AudioPlayer',
+      params: { bookId: BookId; title: string; coverUrl?: string },
+    ): void;
   };
 }
 
@@ -540,12 +550,19 @@ export default function LibraryScreen({ navigation }: LibraryScreenProps) {
         await openBook(bookId, format);
         setOpenNotice(undefined);
         if (format === 'AUDIO') {
-          navigation.navigate('AudioPlayer', { bookId, title: titles.get(bookmark.bookId)?.title ?? bookmark.bookId });
+          const summary = titles.get(bookmark.bookId);
+          navigation.navigate('AudioPlayer', {
+            bookId,
+            title: summary?.title ?? bookmark.bookId,
+            coverUrl: summary?.coverUrl,
+          });
         } else {
+          const summary = titles.get(bookmark.bookId);
           const target = bookmarkTarget(bookmark.locator);
           navigation.navigate('Reader', {
             bookId,
             format,
+            title: summary?.title,
             ...(target === undefined ? {} : { initialTarget: target }),
           });
         }
@@ -569,6 +586,12 @@ export default function LibraryScreen({ navigation }: LibraryScreenProps) {
       setPendingHoldAction({ holdId, action: 'accept' });
       getLicenceSource()
         .acceptOffer(holdId)
+        // PREVIOUSLY MISSING: nothing here ever cleared offerStore, so QueueNotificationHost's
+        // global banner kept offering a copy this exact call just consumed — a ghost offer that
+        // survived until its own expiry, tapping it would then fail against a hold that no
+        // longer exists. QueueNotificationHost.tsx's own accept/reject already does this; this
+        // screen reaches the same LicenceSource action and needs the same cleanup.
+        .then(() => useOfferStore.getState().clear())
         .catch(() => setActionNotice('Couldn’t accept that offer. Pull to refresh and try again.'))
         .then(() => refresh())
         .catch(() => {})
@@ -583,6 +606,7 @@ export default function LibraryScreen({ navigation }: LibraryScreenProps) {
       setPendingHoldAction({ holdId, action: 'reject' });
       getLicenceSource()
         .cancelHold(holdId)
+        .then(() => useOfferStore.getState().clear())
         .catch(() => setActionNotice('Couldn’t decline that offer. Pull to refresh and try again.'))
         .then(() => refresh())
         .catch(() => {})
@@ -1059,6 +1083,7 @@ export default function LibraryScreen({ navigation }: LibraryScreenProps) {
               itemIds: group.articleItemIds,
             })
           }
+          {...(group.coverUrl === undefined ? {} : { imageUrl: group.coverUrl })}
           badge={
             <Text style={styles.badgeLabel}>
               {group.articleItemIds.length === 1
@@ -1105,7 +1130,12 @@ export default function LibraryScreen({ navigation }: LibraryScreenProps) {
             downloaded" book that no longer opens — see `DownloadRow`'s own
             comment on why this screen cannot promise a download stays
             readable. */}
-        
+        <View style={styles.disclaimer}>
+          <Ionicons name="information-circle-outline" size={14} color={color.textSecondary} />
+          <Text style={styles.disclaimerText}>
+            Access is checked automatically and can expire even while you’re offline.
+          </Text>
+        </View>
       </View>
 
       <View style={styles.tabBar}>
@@ -1383,8 +1413,7 @@ function EliteLoanRow({
   /** Tap → this item's detail page. */
   onPress: () => void;
 }) {
-  const expiresLabel =
-    clock.ready && loan.expiresAt !== undefined ? dueLabel(loan, clock.offsetMs, clock.nowMs) : undefined;
+  const expiresLabel = clock.ready ? eliteExpiresLabel(loan, clock.offsetMs, clock.nowMs) : undefined;
   return (
     <ContentCard
       title={title}
@@ -1394,9 +1423,7 @@ function EliteLoanRow({
       {...(summary?.format === undefined ? {} : { format: summary.format })}
       badge={
         <View style={styles.badgeStack}>
-          {expiresLabel !== undefined && (
-            <Text style={styles.badgeLabel}>{`Access expires: ${expiresLabel}`}</Text>
-          )}
+          {expiresLabel !== undefined && <Text style={styles.badgeLabel}>{expiresLabel}</Text>}
           <AccessTierBadge tier="ELITE" />
         </View>
       }

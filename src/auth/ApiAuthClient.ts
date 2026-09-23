@@ -65,6 +65,13 @@ export interface TokenPair {
   accessToken: string;
   refreshToken: string;
   expiresIn: number;
+  // Institutional (SAML) sign-ins only — echo this back on the NEXT `saml/start` call
+  // (as `deviceId`) so this device reclaims the same concurrent seat instead of the
+  // institution spending a new one. Previously parsed and dropped entirely, which meant
+  // this reclaim never happened — every sign-in, even on an already-known device, minted
+  // a brand-new seat until the institution's cap (default 50, unconfigured anywhere) was
+  // exhausted and every further sign-in failed with SEAT_LIMIT_REACHED.
+  deviceId?: string;
 }
 
 export interface OidcStart {
@@ -103,10 +110,16 @@ export class ApiAuthClient {
   async startSamlSignIn(params: {
     institutionId: string;
     idpHint?: string;
+    // Omit on this device's first-ever sign-in; pass the deviceId a previous TokenPair
+    // returned on every sign-in after that. See TokenPair.deviceId's own comment.
+    deviceId?: string;
   }): Promise<SamlStart> {
     let query = `institutionId=${encodeURIComponent(params.institutionId)}`;
     if (params.idpHint !== undefined) {
       query += `&idpHint=${encodeURIComponent(params.idpHint)}`;
+    }
+    if (params.deviceId !== undefined) {
+      query += `&deviceId=${encodeURIComponent(params.deviceId)}`;
     }
     const body = await this.send('POST', `/api/v1/auth/saml/start?${query}`);
     const parsed = parseSamlStart(body);
@@ -296,10 +309,12 @@ function parseTokenPair(doc: unknown): TokenPair {
   if (typeof raw.expiresIn !== 'number') {
     throw new AuthFailure(AuthError.MALFORMED_RESPONSE, { cause: 'missing expiresIn' });
   }
+  const deviceId = typeof raw.deviceId === 'string' ? raw.deviceId : undefined;
   return {
     accessToken: reqString(raw.accessToken, 'accessToken'),
     refreshToken: reqString(raw.refreshToken, 'refreshToken'),
     expiresIn: raw.expiresIn,
+    ...(deviceId !== undefined ? { deviceId } : {}),
   };
 }
 

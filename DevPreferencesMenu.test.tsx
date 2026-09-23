@@ -52,7 +52,7 @@ async function openMenu(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
   });
-  await fireEvent.press(screen.getByLabelText('Open preferences menu'));
+  await fireEvent.press(screen.getByLabelText('Reading appearance'));
 }
 
 describe('the Layout rows while a screen reader is running', () => {

@@ -81,6 +81,15 @@ function publication(
 const FIRST = publication('item_env', 'Environmental Policy in China', 'Routledge');
 const SECOND = publication('item_ab6', 'Ethnographies of Waiting', 'CRC Press');
 
+// format: 'AUDIO' — the one reliable signal `sectionForPublication` has for
+// the Audiobooks section today.
+const AUDIOBOOK: Publication = { ...publication('item_aud', 'The Long Thaw', 'Princeton'), format: 'AUDIO' };
+// workType: 'article' — Q-1b resolved, wokay's OpdsPublicationMapper tags an
+// ARTICLE work type as schema.org/ScholarlyArticle, normalize.ts maps that to
+// this. The real, live path into the Articles section now, not a forward-
+// compat guess.
+const ARTICLE: Publication = { ...publication('item_art', 'Nature Climate Change', 'Springer'), workType: 'article' };
+
 const BROWSE: NavLink[] = [
   { title: 'eBooks', href: 'https://api.tf/groups/ebooks', shelfId: 'ebooks', target: 'shelf' },
   { title: 'Open access', href: 'https://api.tf/groups/open-access', shelfId: 'open-access', target: 'shelf' },
@@ -532,6 +541,75 @@ describe('successful results', () => {
     await waitFor(() => expect(screen.getByTestId('content-card')).toBeTruthy());
     expect(screen.queryByTestId('search-empty')).toBeNull();
     expect(screen.queryByTestId('search-error')).toBeNull();
+  });
+});
+
+describe('results grouped into eBooks / Audiobooks / Articles sections', () => {
+  it('sections all three, in that fixed order, regardless of the order the server sent them', async () => {
+    // Deliberately out of order (Article, then Audiobook, then eBook) — the
+    // sections must reorder to eBooks/Audiobooks/Articles rather than
+    // mirroring the server's own order, unlike WITHIN a section (see the
+    // "in the order the server sent them" test above, which still holds).
+    setSearchPipeline(
+      stub(() => Promise.resolve(feed({ publications: [ARTICLE, AUDIOBOOK, FIRST] }))),
+    );
+    await render(<SearchScreen />);
+
+    await submit('climate');
+
+    await waitFor(() => expect(screen.getAllByTestId('content-card-title')).toHaveLength(3));
+    const sections = screen.getAllByText(/^(eBooks|Audiobooks|Articles)$/);
+    expect(sections.map((node) => node.props.children)).toEqual(['eBooks', 'Audiobooks', 'Articles']);
+
+    const titles = screen.getAllByTestId('content-card-title').map((node) => node.props.children);
+    expect(titles).toEqual(['Environmental Policy in China', 'The Long Thaw', 'Nature Climate Change']);
+  });
+
+  it('renders only the sections that actually have a result', async () => {
+    setSearchPipeline(stub(() => Promise.resolve(feed({ publications: [FIRST, SECOND] }))));
+    await render(<SearchScreen />);
+
+    await submit('climate');
+
+    await waitFor(() => expect(screen.getAllByTestId('content-card-title')).toHaveLength(2));
+    expect(screen.getByText('eBooks')).toBeTruthy();
+    expect(screen.queryByText('Audiobooks')).toBeNull();
+    expect(screen.queryByText('Articles')).toBeNull();
+  });
+
+  it('groups a mix of two types under two headers, both eBooks together', async () => {
+    setSearchPipeline(
+      stub(() => Promise.resolve(feed({ publications: [FIRST, AUDIOBOOK, SECOND] }))),
+    );
+    await render(<SearchScreen />);
+
+    await submit('climate');
+
+    await waitFor(() => expect(screen.getAllByTestId('content-card-title')).toHaveLength(3));
+    expect(screen.getByText('eBooks')).toBeTruthy();
+    expect(screen.getByText('Audiobooks')).toBeTruthy();
+    expect(screen.queryByText('Articles')).toBeNull();
+
+    const titles = screen.getAllByTestId('content-card-title').map((node) => node.props.children);
+    expect(titles).toEqual([
+      'Environmental Policy in China',
+      'Ethnographies of Waiting',
+      'The Long Thaw',
+    ]);
+  });
+
+  it('puts a real, backend-tagged article (schema.org/ScholarlyArticle, mapped to workType "article") in its own section, not eBooks', async () => {
+    setSearchPipeline(stub(() => Promise.resolve(feed({ publications: [FIRST, ARTICLE] }))));
+    await render(<SearchScreen />);
+
+    await submit('climate');
+
+    await waitFor(() => expect(screen.getAllByTestId('content-card-title')).toHaveLength(2));
+    expect(screen.getByTestId('search-section-ebooks')).toBeTruthy();
+    expect(screen.getByTestId('search-section-articles')).toBeTruthy();
+    expect(
+      within(screen.getByTestId('search-section-articles')).getByText('Nature Climate Change'),
+    ).toBeTruthy();
   });
 });
 

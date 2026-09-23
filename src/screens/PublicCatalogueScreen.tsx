@@ -44,25 +44,33 @@
 // second reason would still stand on its own until this screen gains an
 // institution, or flambeau grows a way to queue anonymously.
 //
-// ─── NO JOURNALS HERE, AND IT IS A REAL BACKEND GAP, NOT A TODO ─────────────
+// ─── JOURNALS, WITH A REAL DRILL-DOWN — NO ARTICLES ON THIS SCREEN ──────────
 //
-// CatalogueScreen.tsx (the institution-selected screen) has a "Journals"
-// section, built from that institution's own `getHomeCatalogue()` navigation
-// entries and browsed with `getWork(institutionId, workId)`. Neither has a
-// no-institution counterpart: `getPublicFeed()` (what THIS screen calls)
-// returns a `Shelf` — a flat publications list with no `navigation` field at
-// all — and `CatalogueSource`'s interface has no `getPublicWork`. wokay's
-// contract has never published a "list every public journal" endpoint or a
-// way to fetch a journal/volume/issue feed without an institution id (the
-// real endpoint is literally `/opds/v1/institutions/{id}/works/{workId}`).
+// `getPublicJournals()` (GET /opds/v1/public/journals) is the no-institution
+// counterpart to CatalogueScreen.tsx's own "Journals" section: every published
+// journal, cover included, with no institution and no entitlement to check —
+// a journal has nothing of its own to acquire. Rendered the same way
+// (SectionHeader + ContentCard rows), reusing the exact components the
+// signed-in screen already uses, ABOVE the "All titles" grid below.
 //
-// A client-side workaround was considered — fetch every known institution's
-// catalogue and merge their journal entries into one list — and rejected: it
-// does not scale (N full catalogue fetches for one preview section, against
-// however many institutions the real backend has, not the two dev fixtures),
-// and the same journal held by several institutions would show up once per
-// institution rather than once. This needs a real backend capability (a
-// public journals list, and a public work-fetch), not a screen change.
+// TAPPING A JOURNAL GOES INTO IT — Journal → Volumes & Issues → Issue
+// Articles → Article Details, the SAME screens and the SAME flow a signed-in
+// reader gets, just with `institutionId: null` threaded through instead of a
+// real one. Each screen in that chain calls `getPublicWork(workId)` instead
+// of `getWork(institutionId, workId)` when `institutionId === null` (see
+// JournalScreen.tsx/JournalVolumesScreen.tsx/JournalIssueScreen.tsx's own
+// `fetchRoot`/`startFetch`/`fetchArticles`). Sign-in is only ever reached from
+// INSIDE an article's own detail page, on pressing Read/Play for an
+// ELITE/SUBSCRIPTION article — the ordinary `resolveAccess` →
+// `requires_signin` → AccessGate path every other gated action already uses,
+// not a special case for journals.
+//
+// ARTICLES DELIBERATELY NEVER APPEAR ON THIS SCREEN. `catalogueFeed()` (what
+// `getPublicFeed` calls) excludes WorkType.ARTICLE outright — an article
+// belongs to its journal's own drill-down, not to a flat "every open access
+// thing" grid mixed in with books. A bare article has no cover of its own
+// besides (only its ancestor JOURNAL does), which is what made an earlier,
+// rejected attempt at including them here look badly broken.
 import { useCallback, useEffect, useState } from 'react';
 import {
   Pressable,
@@ -87,7 +95,7 @@ import { SectionHeader } from '@components/SectionHeader';
 import { getCatalogueSource } from '../config/catalogue';
 import { type CatalogueError, isCatalogueFailure } from '@model/errors';
 import { CATALOGUE_ERROR_COPY, catalogueErrorVariant } from '@model/errorCopy';
-import type { Publication, SortOrder } from '../model/types';
+import type { Publication, PublicJournal, SortOrder } from '../model/types';
 import type { CatalogueStackParamList } from '../navigation/types';
 import type { BrowseFilters } from '@search/browseLink';
 import { PUBLIC_FEED, useFeedScrollMemory } from '@hooks/useFeedScrollMemory';
@@ -177,6 +185,13 @@ export default function PublicCatalogueScreen() {
     (windowWidth - space.md * 2 - space.sm) / 2,
   );
 
+  // Decorative discovery section, separate from the main feed's own
+  // loading/failed state: a journals-fetch failure must not blank the whole
+  // screen when the "All titles" grid loaded fine. Empty is also just "no
+  // journals right now" — same "missing is not an error" treatment
+  // ItemDetailScreen/JournalScreen give an absent cover.
+  const [journals, setJournals] = useState<PublicJournal[]>([]);
+
   const [publications, setPublications] = useState<Publication[]>([]);
   // The cursor, taken off the response's own `next` link. `undefined` means
   // there is no next page.
@@ -224,6 +239,17 @@ export default function PublicCatalogueScreen() {
   useEffect(() => {
     fetchFirstPage();
   }, [fetchFirstPage]);
+
+  // Fired alongside the main feed, not chained after it — the two sections
+  // are independent, so one waiting on the other would only add latency for
+  // no benefit. Failure is silent (`journals` just stays `[]`): this section
+  // is discovery, not the reason a signed-out reader opened this screen.
+  useEffect(() => {
+    getCatalogueSource()
+      .getPublicJournals()
+      .then(setJournals)
+      .catch(() => {});
+  }, []);
 
   const retry = useCallback(() => {
     setLoading(true);
@@ -312,10 +338,36 @@ export default function PublicCatalogueScreen() {
         style={styles.screen}
         contentContainerStyle={styles.content}
       >
+        {/* Same shape as CatalogueScreen.tsx's own Journals section — a plain
+            list of ContentCards, hidden entirely once there is nothing to
+            show, rather than an empty section header sitting above the grid. */}
+        {journals.length > 0 && (
+          <View style={styles.section}>
+            <SectionHeader title="Journals" emphasis="editorial" />
+            <View style={styles.list}>
+              {journals.map((journal) => (
+                <ContentCard
+                  key={journal.workId}
+                  title={journal.title}
+                  imageUrl={journal.coverUrl}
+                  onPress={() =>
+                    navigation.navigate('Journal', {
+                      workId: journal.workId,
+                      title: journal.title,
+                      institutionId: null,
+                      coverUrl: journal.coverUrl,
+                    })
+                  }
+                />
+              ))}
+            </View>
+          </View>
+        )}
+
         <SectionHeader
-          title="Open Access Titles"
+          title="All titles"
           emphasis="editorial"
-          action={<FilterSortButton onPress={openSheet} accessibilityLabel="Filter & Sort Open Access Titles" />}
+          action={<FilterSortButton onPress={openSheet} accessibilityLabel="Filter & Sort All titles" />}
         />
 
         {loading &&
@@ -432,6 +484,14 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: color.white,
+  },
+  // Matches CatalogueScreen.tsx's own `section`/`list` — the Journals row
+  // reuses that screen's exact spacing, not a new value invented for this one.
+  section: {
+    gap: space.sm,
+  },
+  list: {
+    gap: space.sm,
   },
   content: {
     padding: space.md,

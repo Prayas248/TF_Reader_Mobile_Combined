@@ -30,6 +30,11 @@
 
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
+import {
+  allowScreenCaptureAsync,
+  preventScreenCaptureAsync,
+  READER_CAPTURE_KEY,
+} from '@/features/reader/captureProtection';
 import { OFFLINE_LOCK_EVENTS } from '@/shared/contracts';
 import type { BookId } from '@/shared/contracts';
 import { eventBus, resetEventBusForTests } from '@/shared/eventBus';
@@ -108,6 +113,14 @@ jest.mock('expo-audio', () => ({
   __esModule: true,
   useAudioPlayerStatus: (player: typeof mockFakePlayer) => ({ ...player }),
   setAudioModeAsync: jest.fn(() => Promise.resolve()),
+}));
+
+// Same seam ReaderScreen.test.tsx mocks, same reason — see that file's own comment on
+// captureProtection.ts's real implementation lazily requiring a native module Jest can't load.
+jest.mock('@/features/reader/captureProtection', () => ({
+  READER_CAPTURE_KEY: 'reader-content',
+  preventScreenCaptureAsync: jest.fn(() => Promise.resolve()),
+  allowScreenCaptureAsync: jest.fn(() => Promise.resolve()),
 }));
 
 function getFakePlayer() {
@@ -255,6 +268,24 @@ describe('AudioPlayerScreen', () => {
     expect(() => unmount()).not.toThrow();
     expect(fakePlayer.clearLockScreenControls).not.toHaveBeenCalled();
     expect(fakePlayer.remove).not.toHaveBeenCalled();
+  });
+
+  it('prevents screen capture for as long as this book is open, and re-allows it on unmount', async () => {
+    const { unmount } = await render(
+      <AudioPlayerScreen bookId="dev-sample-audio" title="My Audiobook" />,
+    );
+    await waitFor(() => expect(getFakePlayer().replace).toHaveBeenCalled());
+
+    expect(preventScreenCaptureAsync).toHaveBeenCalledWith(READER_CAPTURE_KEY);
+    expect(allowScreenCaptureAsync).not.toHaveBeenCalled();
+
+    // act(), not a bare unmount() — see this file's own note above on why unmount alone does not
+    // flush effect cleanups synchronously here.
+    await act(async () => {
+      await unmount();
+    });
+
+    expect(allowScreenCaptureAsync).toHaveBeenCalledWith(READER_CAPTURE_KEY);
   });
 
   // REGRESSION for a real-device bug: reopening a still-playing book restarted it from the
@@ -511,7 +542,7 @@ describe('AudioPlayerScreen', () => {
     await waitFor(() =>
       expect(fakePlayer.setActiveForLockScreen).toHaveBeenCalledWith(
         true,
-        { title: 'My Audiobook', artist: 'TF Reader' },
+        { title: 'My Audiobook', artist: 'Nexus' },
         { showSeekForward: true, showSeekBackward: true },
       ),
     );

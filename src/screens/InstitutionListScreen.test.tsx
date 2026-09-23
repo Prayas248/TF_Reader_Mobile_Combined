@@ -64,11 +64,13 @@ function fakeSource(
     getShelf: unused,
     getPublication: unused,
     getPublicFeed: unused,
+    getPublicJournals: unused,
     getPublicPublication: unused,
     getInstitutions,
     getInstitution: getInstitution ?? unused,
     getItemsBatch: unused,
     getWork: unused,
+    getPublicWork: unused,
   };
 }
 

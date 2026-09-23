@@ -22,6 +22,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 
 import Spinner from '@components/Spinner';
 import { color, radius, space } from '@theme/tokens';
@@ -117,15 +118,19 @@ export function BookmarksPanel({
   return (
     <View style={styles.panel}>
       <View style={styles.headerRow}>
-        <Text style={styles.title}>Bookmarks</Text>
-        {/* Named for the same reason SearchPanel's is — see the note there. */}
+        <View style={styles.headerTitleRow}>
+          <Ionicons name="bookmark-outline" style={styles.headerIcon} />
+          <Text style={styles.title}>Bookmarks</Text>
+        </View>
+        {/* Named for the same reason SearchPanel's is — see the note there. Icon, not text — same
+            circular close-button convention as Search/Contents now use. */}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close bookmarks"
           onPress={onClose}
-          style={styles.action}
+          style={styles.closeButton}
         >
-          <Text style={styles.actionText}>Close</Text>
+          <Ionicons name="close" style={styles.closeIcon} />
         </Pressable>
       </View>
 
@@ -149,7 +154,7 @@ export function BookmarksPanel({
           onPress={submitAdd}
           style={[styles.addButton, !canAddCurrent && styles.disabled]}
         >
-          <Text style={styles.addButtonText}>+ Add</Text>
+          <Ionicons name="add" style={styles.addButtonIcon} />
         </Pressable>
       </View>
 
@@ -196,14 +201,17 @@ export function BookmarksPanel({
                     }}
                     style={styles.editAction}
                   >
-                    <Text style={styles.editActionText}>Save</Text>
+                    <Ionicons name="checkmark" style={styles.editActionIcon} />
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
+                    // Explicit rather than left to the (now-removed) Text child: an icon gives a
+                    // screen reader nothing to say, unlike a bare "Cancel" label always would have.
+                    accessibilityLabel="Cancel"
                     onPress={cancelEdit}
                     style={styles.editAction}
                   >
-                    <Text style={styles.editActionText}>Cancel</Text>
+                    <Ionicons name="close" style={styles.editActionIcon} />
                   </Pressable>
                 </View>
               ) : (
@@ -225,7 +233,7 @@ export function BookmarksPanel({
                     }}
                     style={styles.editButton}
                   >
-                    <Text style={styles.editButtonText}>Edit</Text>
+                    <Ionicons name="pencil-outline" style={styles.editButtonIcon} />
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -235,7 +243,7 @@ export function BookmarksPanel({
                     }}
                     style={styles.deleteButton}
                   >
-                    <Text style={styles.deleteButtonText}>Delete</Text>
+                    <Ionicons name="trash-outline" style={styles.deleteButtonIcon} />
                   </Pressable>
                 </View>
               ),
@@ -273,15 +281,20 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
 
+  // Same header shape as SearchPanel — see that file's own comment on why: a title with a leading
+  // icon plus a circular close button, one visual system rather than three panel-specific headers.
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  headerIcon: { fontSize: 20, color: color.primary },
   title: { fontSize: 18, fontWeight: '700', color: color.textPrimary },
-  action: {
-    paddingHorizontal: 10,
-    paddingVertical: space.sm,
+  closeButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: radius.card,
-    backgroundColor: color.surface,
   },
-  actionText: { fontSize: 14, fontWeight: '700', color: color.textPrimary },
+  closeIcon: { fontSize: 22, color: color.textSecondary },
 
   addRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 12 },
   addInput: {
@@ -289,19 +302,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.border,
     borderRadius: radius.card,
-    paddingHorizontal: 10,
-    paddingVertical: space.sm,
+    backgroundColor: color.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     fontSize: 14,
     color: color.textPrimary,
   },
+  // Filled brand-blue circle — same "solid accent for the row's one primary action" treatment as
+  // SearchPanel's own searchButton.
   addButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: radius.card,
+    minWidth: 44,
+    minHeight: 44,
     alignItems: 'center',
-    backgroundColor: color.surface,
+    justifyContent: 'center',
+    borderRadius: radius.card,
+    backgroundColor: color.primary,
   },
-  addButtonText: { fontSize: 14, fontWeight: '700', color: color.textPrimary },
+  addButtonIcon: { fontSize: 22, color: color.white },
   disabled: { opacity: 0.4 },
 
   listWrap: { flex: 1, marginTop: 12 },
@@ -314,15 +331,30 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: space.sm,
     borderBottomWidth: 1,
     borderBottomColor: color.border,
   },
   rowBody: { flex: 1, paddingVertical: 12 },
   rowLabel: { fontSize: 15, color: color.textPrimary },
-  editButton: { paddingHorizontal: 10, paddingVertical: space.sm },
-  editButtonText: { fontSize: 13, fontWeight: '700', color: color.textPrimary },
-  deleteButton: { paddingHorizontal: 10, paddingVertical: space.sm },
-  deleteButtonText: { fontSize: 13, fontWeight: '700', color: color.error },
+  // Icon buttons, not text — same 44pt touch target and glyph convention the rest of the reader's
+  // controls use, rather than a fourth "Edit"/"Delete" text-button style of its own.
+  editButton: {
+    minWidth: 40,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.card,
+  },
+  editButtonIcon: { fontSize: 19, color: color.textSecondary },
+  deleteButton: {
+    minWidth: 40,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.card,
+  },
+  deleteButtonIcon: { fontSize: 19, color: color.error },
 
   editInput: {
     flex: 1,
@@ -335,6 +367,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: color.textPrimary,
   },
-  editAction: { paddingHorizontal: space.sm, paddingVertical: space.sm },
+  editAction: {
+    minWidth: 40,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.card,
+  },
+  editActionIcon: { fontSize: 19, color: color.textPrimary },
   editActionText: { fontSize: 13, fontWeight: '700', color: color.textPrimary },
 });

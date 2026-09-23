@@ -92,7 +92,7 @@ describe('BookListScreen', () => {
 
       await waitFor(() => {
         expect(openBook).toHaveBeenCalledWith(bookId, format);
-        expect(navigate).toHaveBeenCalledWith('Reader', { bookId, format });
+        expect(navigate).toHaveBeenCalledWith('Reader', { bookId, format, title: label });
       });
     },
   );

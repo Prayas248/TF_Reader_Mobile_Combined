@@ -208,7 +208,7 @@ export function switchActiveAudioTrack(
   bookId: BookId,
   uri: string,
   title: string,
-  artist: string = 'TF Reader',
+  artist: string = 'Nexus',
   initialPositionSeconds?: number,
 ): void {
   const seekPos =

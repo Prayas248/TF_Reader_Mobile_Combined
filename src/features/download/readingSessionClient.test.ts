@@ -69,8 +69,9 @@ function neverRespondingFetch(): jest.Mock {
 // Must match readingSessionClient.ts's own (deliberately un-exported — see its comment) local
 // REQUEST_TIMEOUT_MS. Kept as a literal here rather than imported so this test also catches an
 // accidental change to that value: if the module changes it, this test starts failing/hanging
-// instead of silently advancing the wrong amount.
-const REQUEST_TIMEOUT_MS = 8000;
+// instead of silently advancing the wrong amount — which is exactly what happened when the real
+// value moved from 8s to 20s (queue audit, 2026-09-20) and this literal wasn't updated in step.
+const REQUEST_TIMEOUT_MS = 20_000;
 
 describe('borrowLoan', () => {
   const originalFetch = global.fetch;

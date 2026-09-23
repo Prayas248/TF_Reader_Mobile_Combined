@@ -38,7 +38,7 @@ type Nav = NativeStackNavigationProp<CatalogueStackParamList, 'JournalIssue'>;
 type Props = NativeStackScreenProps<CatalogueStackParamList, 'JournalIssue'>;
 
 export default function JournalIssueScreen({ route }: Props) {
-  const { journalWorkId, journalTitle, institutionId, volumeTitle, issueTitle, workId } = route.params;
+  const { journalWorkId, journalTitle, institutionId, volumeTitle, issueTitle, workId, coverUrl } = route.params;
   const navigation = useNavigation<Nav>();
 
   const session = useCurrentSession();
@@ -50,8 +50,12 @@ export default function JournalIssueScreen({ route }: Props) {
   const [articles, setArticles] = useState<Publication[]>([]);
 
   const fetchArticles = useCallback(() => {
-    getCatalogueSource()
-      .getWork(institutionId, workId)
+    // Signed-out (no institution at all): getPublicWork, same branch JournalScreen's own
+    // fetchRoot uses.
+    (institutionId === null
+      ? getCatalogueSource().getPublicWork(workId)
+      : getCatalogueSource().getWork(institutionId, workId)
+    )
       .then((feed: WorkFeed) => setArticles(feed.kind === 'publications' ? feed.articles : []))
       .catch(() => setFailed(true))
       .finally(() => setLoading(false));
@@ -72,9 +76,9 @@ export default function JournalIssueScreen({ route }: Props) {
       navigation.navigate('ItemDetail', {
         itemId: id,
         workType: 'article',
-        articleContext: { journalWorkId, institutionId, journalTitle, volumeTitle, issueTitle },
+        articleContext: { journalWorkId, institutionId, journalTitle, volumeTitle, issueTitle, coverUrl },
       }),
-    [navigation, journalWorkId, institutionId, journalTitle, volumeTitle, issueTitle],
+    [navigation, journalWorkId, institutionId, journalTitle, volumeTitle, issueTitle, coverUrl],
   );
 
   if (failed) {

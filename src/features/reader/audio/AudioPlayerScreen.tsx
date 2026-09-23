@@ -43,11 +43,19 @@ import {
 } from 'react';
 
 import { useAudioPlayerStatus } from 'expo-audio';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Ionicons from '@expo/vector-icons/Ionicons';
 
 import Loader from '@components/Loader';
 import { color, radius, space } from '@theme/tokens';
 
+import {
+  allowScreenCaptureAsync,
+  preventScreenCaptureAsync,
+  READER_CAPTURE_KEY,
+} from '@/features/reader/captureProtection';
 import { useContentLock } from '@/features/reader/useContentLock';
 import { formatDiagnosticErrorMessage } from '@/shared/contracts';
 import type { BookId } from '@/shared/contracts';
@@ -71,6 +79,10 @@ const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
 /** End-of-track tolerance (seconds). If the player is within this threshold of duration when play
  * is pressed, restart from the beginning instead of no-oping. */
 const TRACK_END_EPSILON_SECONDS = 0.5;
+// Matches ItemDetailScreen's own COVER_WIDTH:COVER_HEIGHT ratio (6:9 = 2:3) — an ordinary
+// portrait book-cover shape, not a square album tile. The absolute size is this screen's own
+// (see coverWidth/coverHeight's own comment) — only the shape is shared.
+const COVER_ASPECT_RATIO = 1.5;
 
 /**
  * The one thing a caller may need to reach into this screen for from the outside: checking whether
@@ -99,6 +111,18 @@ export interface AudioPlayerScreenProps {
    * instance; it relies on the remount instead. */
   bookId: BookId;
   title: string;
+  /** The book's cover image, for the hero art. Absent shows a plain placeholder — same
+   * "missing cover is not an error" treatment ItemDetailScreen/JournalScreen give a cover. */
+  coverUrl?: string;
+  /**
+   * Presence renders a back chevron at the left of the top bar and wires it to this callback;
+   * absence renders no back control at all. Navigation-agnostic on the same grounds as
+   * `onBeforePlay` — this file has no `navigation` prop of its own. `AudioPlayerRouteScreen.tsx`
+   * supplies `navigation.goBack`. Matches `ReaderScreen`'s identical `onBack` prop and reasoning:
+   * the native-stack header is hidden for this route (RootNavigator.tsx) so the player can use the
+   * full screen, and this screen draws its own back control instead.
+   */
+  onBack?: () => void;
   /** Seconds into the track to resume at, or undefined for "start from the top." Read once on
    * mount — see AudioPlayerRouteScreen.tsx for where this comes from. */
   initialPosition?: number;
@@ -180,14 +204,42 @@ function Scrubber({
 }
 
 function AudioPlayerScreenComponent(
-  { bookId, title, initialPosition, onPositionChange, onPositionCommit, onBeforePlay }: AudioPlayerScreenProps,
+  {
+    bookId,
+    title,
+    coverUrl,
+    onBack,
+    initialPosition,
+    onPositionChange,
+    onPositionCommit,
+    onBeforePlay,
+  }: AudioPlayerScreenProps,
   ref: React.ForwardedRef<AudioPlayerScreenHandle>,
 ): React.JSX.Element {
+  // The native-stack header is hidden for this route (RootNavigator.tsx) so the player can use the
+  // full screen — this screen's own top bar below has to account for the top safe area itself, the
+  // same way AppHeader always did on its behalf. Matches ReaderScreen's identical reasoning.
+  const insets = useSafeAreaInsets();
+
+  // Same 2:3 portrait shape ItemDetailScreen's own book jacket uses, but sized as a real hero
+  // (most of the screen's own width, Spotify's own scale) rather than that screen's small fixed
+  // constant — a cover sized to match ItemDetailScreen exactly read as mostly empty navy space on
+  // this screen's own dark, full-bleed background. `- 40` accounts for `container`'s own
+  // `paddingHorizontal: 20` — this is the FULL inner content width, not a further-inset fraction
+  // of it. Also capped by available height, so a short screen never pushes the transport controls
+  // below the fold.
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const coverWidthByWindow = windowWidth - 40;
+  const coverWidthByHeight = (windowHeight * 0.5) / COVER_ASPECT_RATIO;
+  const coverWidth = Math.min(coverWidthByWindow, coverWidthByHeight);
+  const coverHeight = coverWidth * COVER_ASPECT_RATIO;
+
   const [uri, setUri] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const hasResumedRef = useRef(false);
   const [queueModalVisible, setQueueModalVisible] = useState(false);
   const [sleepTimerModalVisible, setSleepTimerModalVisible] = useState(false);
+  const [coverFailed, setCoverFailed] = useState(false);
 
   const hasNext = useAudioQueueStore((s) => s.hasNext());
   const hasPrevious = useAudioQueueStore((s) => s.hasPrevious());
@@ -244,6 +296,20 @@ function AudioPlayerScreenComponent(
       cancelled = true;
     };
   }, [bookId]);
+
+  /**
+   * Same mitigation as `ReaderScreen.tsx`'s own capture-protection effect, and the SAME shared
+   * `READER_CAPTURE_KEY` — see `captureProtection.ts`'s header on why a second, audio-local key
+   * would risk leaking a text field on iOS during a Reader <-> Audio transition. This screen had no
+   * capture protection at all before this: unlike EPUB/PDF, audio never grew even the AppState/
+   * `isObscured` iOS mitigation, so this is a plain-per-book mount/unmount pair, no cover view.
+   */
+  useEffect(() => {
+    void preventScreenCaptureAsync(READER_CAPTURE_KEY);
+    return () => {
+      void allowScreenCaptureAsync(READER_CAPTURE_KEY);
+    };
+  }, []);
 
   // A MODULE-LEVEL SINGLETON, NOT `useAudioPlayer` — REAL-DEVICE FIX. `useAudioPlayer` (the hook)
   // auto-releases its player the moment the component that called it unmounts, which is exactly
@@ -320,7 +386,7 @@ function AudioPlayerScreenComponent(
     if (status.playing) {
       player.setActiveForLockScreen(
         true,
-        { title, artist: 'TF Reader' },
+        { title, artist: 'Nexus' },
         { showSeekForward: true, showSeekBackward: true },
       );
     }
@@ -471,41 +537,113 @@ function AudioPlayerScreenComponent(
   }
 
   if (!status.isLoaded) {
-    return <Loader title={`Loading ${title}…`} testID="audio-player-loading" />;
+    return (
+      <View style={styles.loadingScreen}>
+        <Loader title={`Loading ${title}…`} testID="audio-player-loading" />
+      </View>
+    );
   }
 
+  let playAccessibilityLabel: string;
+  if (status.playing) {
+    playAccessibilityLabel = 'Pause';
+  } else if (playCheckPending) {
+    playAccessibilityLabel = 'Checking progress';
+  } else {
+    playAccessibilityLabel = 'Play';
+  }
+  const prevDisabled = !hasPrevious && status.currentTime <= 3.0;
+
   return (
-    <View style={styles.container}>
-      <View style={styles.headerRow}>
+    <View style={[styles.container, { paddingBottom: insets.bottom + space.xl }]}>
+      {/* Fixed top zone — back + a plain "now playing" utility label, icon actions on the right.
+          The book's own name lives with its cover below, not up here — Spotify keeps title and
+          art as one visual group, and splitting them apart (an earlier pass tried it) reads as
+          two separate things rather than one "now playing" block. `paddingTop` is applied inline
+          since a static StyleSheet value can't see the safe area — mirrors ReaderScreen's own
+          header bar. */}
+      <View style={[styles.topBar, { paddingTop: insets.top + space.xs }]}>
+        <View style={styles.topBarLeft}>
+          {onBack && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              onPress={onBack}
+              style={styles.iconButton}
+            >
+              <Ionicons name="chevron-back" size={24} color={color.white} />
+            </Pressable>
+          )}
+          <Text style={styles.eyebrow} numberOfLines={1}>
+            NOW PLAYING
+          </Text>
+        </View>
+        <View style={styles.topBarActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              sleepTimerPhase === 'running'
+                ? `Sleep timer, ${formatTime(sleepTimerRemainingSeconds)} remaining`
+                : 'Sleep timer'
+            }
+            onPress={() => setSleepTimerModalVisible(true)}
+            style={styles.iconButton}
+          >
+            <Ionicons
+              name={sleepTimerPhase === 'running' ? 'moon' : 'moon-outline'}
+              size={20}
+              color={color.white}
+            />
+            {sleepTimerPhase === 'running' && (
+              <Text style={styles.iconButtonBadge}>{formatTime(sleepTimerRemainingSeconds)}</Text>
+            )}
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Open queue, ${queueLength} track${queueLength === 1 ? '' : 's'}`}
+            onPress={() => setQueueModalVisible(true)}
+            style={styles.iconButton}
+          >
+            <Ionicons name="list" size={22} color={color.white} />
+            {queueLength > 0 && <Text style={styles.iconButtonBadge}>{queueLength}</Text>}
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Cover art and title as ONE group, Spotify's own shape — not split across two areas of
+          the screen. `flex: 1` on this wrapper (not just the image) is what centers the whole
+          group in the space left between the fixed top bar and the transport block below, and
+          what keeps that transport block pinned near the bottom regardless of device height. The
+          art itself is sized to fill most of the available width (see coverWidth/coverHeight's
+          own comment) — a small, item-detail-sized cover here read as mostly empty navy space. */}
+      <View style={styles.coverWrap}>
+        {coverUrl !== undefined && !coverFailed ? (
+          <Image
+            // See ContentCard.tsx's/ItemDetailScreen.tsx's own note — the backend re-signs this
+            // URL's querystring on every fetch, so the cache key must ignore it.
+            source={{ uri: coverUrl, cacheKey: coverUrl.split('?')[0] }}
+            style={{ width: coverWidth, height: coverHeight, borderRadius: radius.sheet }}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            transition={200}
+            accessibilityLabel={`${title} cover`}
+            onError={() => setCoverFailed(true)}
+          />
+        ) : (
+          <View
+            style={[
+              styles.coverPlaceholder,
+              { width: coverWidth, height: coverHeight, borderRadius: radius.sheet },
+            ]}
+            accessibilityLabel={`${title} cover`}
+          >
+            <Ionicons name="musical-notes" size={64} color="rgba(255, 255, 255, 0.35)" />
+          </View>
+        )}
+
         <Text style={styles.title} numberOfLines={2}>
           {title}
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            sleepTimerPhase === 'running'
-              ? `Sleep timer, ${formatTime(sleepTimerRemainingSeconds)} remaining`
-              : 'Sleep timer'
-          }
-          onPress={() => setSleepTimerModalVisible(true)}
-          style={styles.queueButton}
-        >
-          <Text style={styles.queueButtonLabel}>
-            {sleepTimerPhase === 'running'
-              ? formatTime(sleepTimerRemainingSeconds)
-              : 'Sleep Timer'}
-          </Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Open queue, ${queueLength} track${queueLength === 1 ? '' : 's'}`}
-          onPress={() => setQueueModalVisible(true)}
-          style={styles.queueButton}
-        >
-          <Text style={styles.queueButtonLabel}>
-            Queue {queueLength > 0 ? `(${queueLength})` : ''}
-          </Text>
-        </Pressable>
       </View>
 
       <Scrubber
@@ -517,43 +655,36 @@ function AudioPlayerScreenComponent(
         }}
       />
 
+      {/* Transport — a large centered play/pause (Spotify's own hierarchy: the one action that
+          matters is the biggest thing on screen), ±15s flanking it, track-skip at the ends. */}
       <View style={styles.transportRow}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Previous track"
-          disabled={!hasPrevious && status.currentTime <= 3.0}
+          disabled={prevDisabled}
           onPress={() => void skipToPreviousTrack(status.currentTime)}
-          style={[
-            styles.transportButton,
-            styles.trackNavButton,
-            !hasPrevious && status.currentTime <= 3.0 && styles.transportButtonDisabled,
-          ]}
+          style={styles.trackNavButton}
         >
-          <Text
-            style={[
-              styles.transportButtonLabel,
-              styles.trackNavIcon,
-              !hasPrevious && status.currentTime <= 3.0 && styles.transportButtonLabelDisabled,
-            ]}
-          >
-            |◀◀
-          </Text>
+          <Ionicons
+            name="play-skip-back"
+            size={26}
+            color={prevDisabled ? 'rgba(255, 255, 255, 0.3)' : color.white}
+          />
         </Pressable>
 
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Skip back ${SKIP_SECONDS} seconds`}
           onPress={() => skip(-SKIP_SECONDS)}
-          style={styles.transportButton}
+          style={styles.skipButton}
         >
-          <Text style={styles.transportButtonLabel}>-{SKIP_SECONDS}s</Text>
+          <Text style={styles.skipButtonGlyph}>↺</Text>
+          <Text style={styles.skipButtonLabel}>{SKIP_SECONDS}</Text>
         </Pressable>
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={
-            status.playing ? 'Pause' : playCheckPending ? 'Checking progress' : 'Play'
-          }
+          accessibilityLabel={playAccessibilityLabel}
           disabled={playCheckPending}
           onPress={() => {
             if (status.playing) {
@@ -565,22 +696,26 @@ function AudioPlayerScreenComponent(
               void beginPlayback();
             }
           }}
-          style={[
-            styles.transportButton,
-            styles.playButton,
-            playCheckPending && styles.playButtonPending,
-          ]}
+          style={[styles.playButton, playCheckPending && styles.playButtonPending]}
         >
-          <Text style={styles.playButtonLabel}>{status.playing ? 'Pause' : 'Play'}</Text>
+          <Ionicons
+            name={status.playing ? 'pause' : 'play'}
+            size={34}
+            color={color.navy}
+            // Optically centers the play triangle, which is not visually centered in its own
+            // glyph box the way pause's two bars are.
+            style={!status.playing && styles.playGlyphNudge}
+          />
         </Pressable>
 
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Skip forward ${SKIP_SECONDS} seconds`}
           onPress={() => skip(SKIP_SECONDS)}
-          style={styles.transportButton}
+          style={styles.skipButton}
         >
-          <Text style={styles.transportButtonLabel}>+{SKIP_SECONDS}s</Text>
+          <Text style={styles.skipButtonLabel}>{SKIP_SECONDS}</Text>
+          <Text style={styles.skipButtonGlyph}>↻</Text>
         </Pressable>
 
         <Pressable
@@ -588,25 +723,19 @@ function AudioPlayerScreenComponent(
           accessibilityLabel="Next track"
           disabled={!hasNext}
           onPress={() => void skipToNextTrack()}
-          style={[
-            styles.transportButton,
-            styles.trackNavButton,
-            !hasNext && styles.transportButtonDisabled,
-          ]}
+          style={styles.trackNavButton}
         >
-          <Text
-            style={[
-              styles.transportButtonLabel,
-              styles.trackNavIcon,
-              !hasNext && styles.transportButtonLabelDisabled,
-            ]}
-          >
-            ▶▶|
-          </Text>
+          <Ionicons
+            name="play-skip-forward"
+            size={26}
+            color={hasNext ? color.white : 'rgba(255, 255, 255, 0.3)'}
+          />
         </Pressable>
       </View>
 
-      <View style={styles.rateRow}>
+      {/* Bottom options — playback speed. Sleep timer/queue already moved to the top bar, so
+          this row is the one thing left that genuinely belongs at the bottom. */}
+      <View style={styles.bottomRow}>
         {PLAYBACK_RATES.map((rate) => (
           <Pressable
             key={rate}
@@ -644,33 +773,81 @@ export const AudioPlayerScreen = forwardRef(AudioPlayerScreenComponent);
 AudioPlayerScreen.displayName = 'AudioPlayerScreen';
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: color.white, padding: 20, gap: space.lg },
+  // Error/lock/loading states stay on the ordinary light surface — they're terminal states
+  // distinct from "now playing", same treatment ReaderScreen gives its own error views.
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 20 },
+  loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.white },
   errorTitle: { fontSize: 17, fontWeight: '700', color: color.error, textAlign: 'center' },
   errorDetail: { fontSize: 14, color: color.textSecondary, textAlign: 'center' },
-  headerRow: {
+
+  // The "now playing" surface itself — dark navy, same identity TopAppBar/BootSplash already
+  // give the rest of the app's chrome, so this reads as a deliberate destination, not a stray
+  // light-themed screen wedged behind a dark tab bar.
+  // `paddingBottom` is applied inline (insets.bottom + space.xl) — see this View's own JSX
+  // usage. Deliberately more than the safe-area inset alone: a real gap between the transport
+  // controls and the bottom edge, not just clearance for the home indicator, is what pulls the
+  // cover+title group (coverWrap's own flex:1 centers within whatever space is left) and the
+  // controls block both up off the very bottom of the screen.
+  container: {
+    flex: 1,
+    backgroundColor: color.navy,
+    paddingHorizontal: 20,
+    gap: space.lg,
+  },
+  // `paddingTop` is applied inline (insets.top + space.xs) — see this View's own JSX comment.
+  topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 12,
-    gap: space.sm,
   },
-  title: { fontSize: 20, fontWeight: '700', color: color.textPrimary, flex: 1, marginRight: 12 },
-  queueButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radius.sheet,
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.border,
-  },
-  queueButtonLabel: {
-    fontSize: 13,
+  topBarLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: space.sm },
+  eyebrow: {
+    fontSize: 11,
     fontWeight: '700',
-    color: color.textSecondary,
+    letterSpacing: 1.5,
+    color: 'rgba(255, 255, 255, 0.6)',
   },
+  topBarActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  iconButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  iconButtonBadge: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+
+  // `flex: 1` is the load-bearing part — see this View's own JSX comment: it is what centres the
+  // cover+title group in whatever space is actually left, and what keeps the transport block
+  // pinned near the bottom of the screen instead of drifting up on a tall device or overflowing
+  // on a short one. Cover width/height come from the responsive coverWidth/coverHeight above.
+  coverWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.md },
+  coverPlaceholder: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Directly under the cover, as one group with it (see coverWrap's own JSX comment) — not a
+  // fixed "top name" separate from the art.
+  title: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: color.white,
+    textAlign: 'center',
+    paddingHorizontal: space.md,
+  },
+
   scrubberRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  timeLabel: { fontSize: 12, color: color.textSecondary, width: 40, textAlign: 'center' },
+  timeLabel: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.6)',
+    width: 40,
+    textAlign: 'center',
+  },
   scrubberTrack: {
     flex: 1,
     height: 28,
@@ -682,7 +859,7 @@ const styles = StyleSheet.create({
     right: 0,
     height: 4,
     borderRadius: 2,
-    backgroundColor: color.border,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   // The accent, not body text — `color.primary` (Ultramarine), same token MiniAudioPlayer's own
   // progress fill and play button use, so the mini and full players read as one brand-blue accent.
@@ -691,46 +868,46 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: color.primary,
   },
+
   transportRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 16,
+    gap: 20,
   },
-  transportButton: {
-    paddingHorizontal: space.md,
-    paddingVertical: 12,
-    borderRadius: 24,
-    backgroundColor: color.surface,
-  },
-  transportButtonLabel: { fontSize: 15, fontWeight: '700', color: color.textPrimary },
   trackNavButton: {
-    paddingHorizontal: 12,
+    padding: 10,
   },
-  trackNavIcon: {
-    fontSize: 12,
-    fontWeight: '700',
+  skipButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 44,
+    height: 44,
   },
-  transportButtonDisabled: {
-    opacity: 0.35,
+  skipButtonGlyph: { fontSize: 18, color: color.white, lineHeight: 20 },
+  skipButtonLabel: { fontSize: 10, fontWeight: '700', color: 'rgba(255, 255, 255, 0.75)' },
+  playButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: color.white,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  transportButtonLabelDisabled: {
-    color: color.textSecondary,
-  },
-  playButton: { backgroundColor: color.primary, minWidth: 96, alignItems: 'center' },
-  // Distinct from transportButtonDisabled's opacity dip: this button isn't disabled-looking,
-  // it's mid-action — a grey fill reads as "pressed and working" rather than "unavailable".
-  playButtonPending: { backgroundColor: color.textSecondary },
-  playButtonLabel: { fontSize: 15, fontWeight: '700', color: color.white },
-  rateRow: { flexDirection: 'row', justifyContent: 'center', gap: space.sm },
+  // Distinct from a disabled look: this button isn't unavailable, it's mid-action — a dimmer
+  // fill reads as "pressed and working" rather than "you can't do this".
+  playButtonPending: { backgroundColor: 'rgba(255, 255, 255, 0.5)' },
+  playGlyphNudge: { marginLeft: 3 },
+
+  bottomRow: { flexDirection: 'row', justifyContent: 'center', gap: space.sm },
   rateButton: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: color.border,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   rateButtonActive: { backgroundColor: color.primary, borderColor: color.primary },
-  rateButtonLabel: { fontSize: 13, fontWeight: '700', color: color.textPrimary },
+  rateButtonLabel: { fontSize: 13, fontWeight: '700', color: 'rgba(255, 255, 255, 0.75)' },
   rateButtonLabelActive: { color: color.white },
 });

@@ -127,11 +127,13 @@ function fakeSource(getHomeCatalogue: DataSource['getHomeCatalogue']): DataSourc
     getShelf: unused,
     getPublication: unused,
     getPublicFeed: unused,
+    getPublicJournals: unused,
     getPublicPublication: unused,
     getInstitutions: unused,
     getInstitution: unused,
     getItemsBatch: unused,
     getWork: unused,
+    getPublicWork: unused,
   };
 }
 

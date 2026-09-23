@@ -130,6 +130,57 @@ function noopSort() {
   /* sort is not a search parameter — see sortDisabled on <FilterSortSheet> */
 }
 
+// ─── result sectioning ─────────────────────────────────────────────────────
+//
+// Results (typed or voice — see onVoiceSubmit's own comment on why there is
+// only ever one results pipeline) are grouped by book type into three
+// sections, ALWAYS in this order, and ONLY the sections that actually have a
+// result render — a section with zero items is skipped, not shown empty.
+
+type SearchResultSection = 'ebooks' | 'audiobooks' | 'articles';
+
+const SEARCH_RESULT_SECTIONS: readonly { key: SearchResultSection; title: string }[] = [
+  { key: 'ebooks', title: 'eBooks' },
+  { key: 'audiobooks', title: 'Audiobooks' },
+  { key: 'articles', title: 'Articles' },
+];
+
+// Named "Articles", not "Journals" — a journal itself never appears in this
+// list (Publication's own doc: "a journal is never a Publication... it has
+// nothing of its own to acquire"; a journal is reached only via the separate
+// NavLink/work drill-down). The only thing that can land in this bucket is a
+// journal ARTICLE, so that is what the section is called.
+//
+// Q-1b (team1_README.md) is now RESOLVED for 'article': wokay's
+// OpdsPublicationMapper always tags an ARTICLE work type as
+// `schema.org/ScholarlyArticle`, mapped by normalize.ts's WOKAY_TYPE_MAP.
+// 'journal' itself still has no producer (a container work type, never a
+// Publication — see above), so it is checked here for forward-compat only;
+// nothing today can ever set it.
+function sectionForPublication(publication: Publication): SearchResultSection {
+  if (publication.workType === 'journal' || publication.workType === 'article') return 'articles';
+  if (publication.format === 'AUDIO' || publication.workType === 'audiobook') return 'audiobooks';
+  return 'ebooks';
+}
+
+// Grouping only — WITHIN a section, the server's own order is preserved
+// (this file's header: "the list is drawn in the order it arrived"), so
+// paging in a further page only appends to whichever sections its own new
+// items belong to, never reshuffles what is already on screen.
+function groupPublicationsByType(
+  publications: Publication[],
+): Record<SearchResultSection, Publication[]> {
+  const groups: Record<SearchResultSection, Publication[]> = {
+    ebooks: [],
+    audiobooks: [],
+    articles: [],
+  };
+  for (const publication of publications) {
+    groups[sectionForPublication(publication)].push(publication);
+  }
+  return groups;
+}
+
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function SearchScreen() {
@@ -266,6 +317,15 @@ export default function SearchScreen() {
 
   const state: SearchStatus = search.state;
   const hasResults = search.publications.length > 0;
+  // Recomputed from the flat, server-ordered list on every render rather than
+  // reduced incrementally — `search.publications` grows via `onLoadMore`
+  // (see PAGINATION below), and re-grouping the whole list each time is what
+  // lets a freshly-loaded page land in the right section with no separate
+  // "which section did the new page belong to" bookkeeping.
+  const groupedPublications = useMemo(
+    () => groupPublicationsByType(search.publications),
+    [search.publications],
+  );
   // Counted, not just a boolean — the "Filter & Sort (1)" badge on the
   // button needs the real number, and a boolean derived from it below costs
   // nothing extra.
@@ -419,7 +479,9 @@ export default function SearchScreen() {
           )}
         </View>
 
-        
+        <Text testID="search-helper" style={styles.helper}>
+          {HELPER}
+        </Text>
       </View>
 
       {/* The outside-tap dismiss for the dropdown above — a transparent
@@ -645,11 +707,20 @@ export default function SearchScreen() {
           </View>
         )}
 
-        {search.publications.map((publication) =>
-          renderPublicationRow(publication, () =>
-            navigation.navigate('ItemDetail', { itemId: publication.id }),
-          ),
-        )}
+        {SEARCH_RESULT_SECTIONS.map(({ key, title }) => {
+          const sectionItems = groupedPublications[key];
+          if (sectionItems.length === 0) return null;
+          return (
+            <View key={key} testID={`search-section-${key}`} style={styles.resultSection}>
+              <SectionHeader title={title} emphasis="editorial" />
+              {sectionItems.map((publication) =>
+                renderPublicationRow(publication, () =>
+                  navigation.navigate('ItemDetail', { itemId: publication.id }),
+                ),
+              )}
+            </View>
+          );
+        })}
 
         {/* PAGINATION IS THE RESPONSE'S `next`, FOLLOWED. No page numbers: the
             server said where the next page is, and there is nothing else to
@@ -947,6 +1018,13 @@ const styles = StyleSheet.create({
   },
   // ─── recently viewed ────────────────────────────────────────────────────────
   recentlyViewed: {
+    gap: space.xs,
+  },
+  // One eBooks/Audiobooks/Articles sub-section — same tight header-to-rows
+  // gap as `recentlyViewed` above, so the two read as the same visual
+  // language; `results`' own `gap: space.sm` (the ScrollView content
+  // container) is what spaces one section from the next.
+  resultSection: {
     gap: space.xs,
   },
   // ─── results header ────────────────────────────────────────────────────────

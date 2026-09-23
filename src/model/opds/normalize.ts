@@ -17,6 +17,7 @@ import type {
   CatalogueEncryption,
   NavLink,
   Publication,
+  PublicJournal,
   SearchFeed,
   Shelf,
   WorkFeed,
@@ -213,15 +214,21 @@ function toImages(value: unknown): { coverUrl?: string; thumbnailUrl?: string } 
 }
 
 // Maps wokay's `metadata['@type']` to our WorkType. Both http and https forms
-// are accepted — feeds in the wild use both. Returns undefined for any value not
-// yet in the published contract (journal, article — Q-1b unanswered); callers
-// fall back to BOOK_WORK_TYPE. Adding a mapping here is the only change needed
-// once wokay confirms the missing values.
+// are accepted — feeds in the wild use both. Q-1b (journal/article — team1_README.md)
+// is RESOLVED as of the ARTICLE work type: an article's `@type` is always
+// `schema.org/ScholarlyArticle`, agreed directly with wokay rather than guessed —
+// see OpdsPublicationMapper.java's own ARTICLE_TYPE constant on their side.
+// `journal` still has no producer (JOURNAL/VOLUME/ISSUE containers never reach
+// this function at all — see Publication's own doc: a journal is never a
+// Publication), so it stays unmapped; any value still not in this table falls
+// back to BOOK_WORK_TYPE at the caller.
 const WOKAY_TYPE_MAP: Record<string, WorkType> = {
   'http://schema.org/Book': 'book',
   'https://schema.org/Book': 'book',
   'http://schema.org/Audiobook': 'audiobook',
   'https://schema.org/Audiobook': 'audiobook',
+  'http://schema.org/ScholarlyArticle': 'article',
+  'https://schema.org/ScholarlyArticle': 'article',
 };
 
 function toWorkType(value: unknown): WorkType | undefined {
@@ -462,6 +469,25 @@ export function normalizeCatalogue(doc: unknown): Catalogue {
       ? { searchHref: reqString(search.href, 'search href') }
       : {}),
   };
+}
+
+// A journal, on the anonymous browse screen this feeds — GET /opds/v1/public/journals. Every
+// entry is the SAME container-publication shape toJournalCover already reads for the Journals
+// group above (no self link, no acquisition link — normalizePublication cannot parse these),
+// this just adds the title normalizePublicJournals's own caller actually needs to render one.
+function toPublicJournal(doc: unknown): PublicJournal {
+  const { workId, coverUrl } = toJournalCover(doc);
+  const publication = asRecord(doc, 'journal publication');
+  const metadata = asRecord(publication.metadata, 'journal publication metadata');
+  const title = reqString(metadata.title, 'journal publication title');
+  return coverUrl === undefined ? { workId, title } : { workId, title, coverUrl };
+}
+
+export function normalizePublicJournals(doc: unknown): PublicJournal[] {
+  const feed = asRecord(doc, 'public journals feed');
+  const publications =
+    feed.publications === undefined ? [] : asArray(feed.publications, 'public journals publications');
+  return publications.map(toPublicJournal);
 }
 
 // The two keys a zero-result search may offer browse targets under.

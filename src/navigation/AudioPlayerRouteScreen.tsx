@@ -128,7 +128,16 @@ const CONFLICT_THRESHOLD_MS = 5_000;
 const AUDIO_LIVE_SYNC_POLL_MS = 120_000;
 
 export function AudioPlayerRouteScreen({ route, navigation }: Props): React.JSX.Element {
-  const { bookId, title } = route.params;
+  const { bookId, title, coverUrl } = route.params;
+
+  // Hides the shared four-tab bar for exactly this screen, same mechanism (and same reason) as
+  // ItemDetailScreen.tsx's and ReaderRouteScreen.tsx's identical effect — a full-screen player has
+  // no tab bar to share space with. The native-stack header is hidden too (RootNavigator.tsx):
+  // AudioPlayerScreen draws its own back button and title, matching ReaderScreen's identical shape.
+  useEffect(() => {
+    navigation.getParent()?.setOptions({ tabBarStyle: { display: 'none' } });
+    return () => navigation.getParent()?.setOptions({ tabBarStyle: undefined });
+  }, [navigation]);
 
   // Initialize or align the audio queue with route params on mount or route update
   useEffect(() => {
@@ -442,6 +451,8 @@ export function AudioPlayerRouteScreen({ route, navigation }: Props): React.JSX.
         key={`${bookId}:${resumeGeneration}`}
         bookId={bookId}
         title={title}
+        coverUrl={coverUrl}
+        onBack={navigation.goBack}
         initialPosition={resolved.positionSeconds}
         onPositionChange={handlePositionChange}
         onPositionCommit={handlePositionCommit}

@@ -35,6 +35,10 @@ export interface ArticleJournalMembership {
   journalTitle: string;
   volumeTitle?: string;
   issueTitle?: string;
+  // The journal's own cover, for Library's Journals tab (`groupArticlesByJournal`)
+  // to show one — Library has no other way to reach a journal's cover for a row
+  // it never independently fetched. See `ArticleContext`'s own doc for the source.
+  coverUrl?: string;
 }
 
 interface ArticleJournalState {

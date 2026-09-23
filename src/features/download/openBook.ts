@@ -62,11 +62,21 @@ export async function openBook(bookId: BookId, format: ContentFormat): Promise<U
 
   // `session.content` is typed required (`ReadingSessionResponse`, reading-session.ts) but
   // `readingSessionClient.ts` casts the raw response body with no runtime check, so a server
-  // response that omits it (observed for a queue-waiting ELITE title whose session predates
-  // actual access) reaches here as `undefined` despite the type. Without this guard,
-  // `session.content.url` below throws a bare `TypeError: Cannot read property 'url' of
-  // undefined` instead of a caught, reportable failure.
+  // response that omits it reaches here as `undefined` despite the type. Two different reasons
+  // that can happen, and they need different messages:
+  if (session.holdCreatedAt !== undefined) {
+    // Not a failure — the read-broker placed this reader in the ELITE wait queue as part of
+    // THIS SAME call, per `ReadBrokerService.queuedResponse()` on the backend, rather than
+    // refusing outright. There is genuinely nothing to read yet. NO_COPIES_AVAILABLE already has
+    // exactly the right copy in WIRE_ERROR_COPY ("There are no copies of this title available
+    // right now.") — reusing that code here means the caller's existing err.code lookup
+    // (ItemDetailScreen.tsx's openBook catch) renders it correctly with no further changes.
+    throw new DownloadFailure(DownloadError.NO_COPIES_AVAILABLE, bookId);
+  }
   if (session.content === undefined) {
+    // Genuinely unexpected — no content AND no hold. Without this guard, `session.content.url`
+    // below throws a bare `TypeError: Cannot read property 'url' of undefined` instead of a
+    // caught, reportable failure.
     throw new DownloadFailure(
       DownloadError.SESSION_FETCH_FAILED,
       bookId,

@@ -471,6 +471,39 @@ describe('normalizePublication', () => {
   });
 });
 
+// Q-1b (team1_README.md): resolved for ARTICLE — wokay's OpdsPublicationMapper always
+// tags an ARTICLE work type as schema.org/ScholarlyArticle, agreed directly rather than
+// guessed. 'journal' itself is still unmapped, because a journal is never a Publication
+// in the first place (see Publication's own doc) — nothing on the wire could ever carry it.
+describe('normalizePublication workType', () => {
+  it('maps schema.org/ScholarlyArticle to workType "article"', () => {
+    const articleDoc = {
+      ...publicationDetail,
+      metadata: { ...publicationDetail.metadata, '@type': 'http://schema.org/ScholarlyArticle' },
+    };
+
+    expect(normalizePublication(articleDoc).workType).toBe('article');
+  });
+
+  it('also accepts the https form of the article type', () => {
+    const articleDoc = {
+      ...publicationDetail,
+      metadata: { ...publicationDetail.metadata, '@type': 'https://schema.org/ScholarlyArticle' },
+    };
+
+    expect(normalizePublication(articleDoc).workType).toBe('article');
+  });
+
+  it('leaves workType unmapped for a type this app has no producer for yet', () => {
+    const unknownTypeDoc = {
+      ...publicationDetail,
+      metadata: { ...publicationDetail.metadata, '@type': 'http://schema.org/Periodical' },
+    };
+
+    expect(normalizePublication(unknownTypeDoc).workType).toBeUndefined();
+  });
+});
+
 describe('normalizePublication rejects feeds it cannot honour', () => {
   it('rejects a publication with no acquisition link', () => {
     const noAcquisition = {

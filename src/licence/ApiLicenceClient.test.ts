@@ -149,14 +149,14 @@ describe('the requests', () => {
   it('reads the change feed from the beginning when since is omitted', async () => {
     const { calls, fetch } = spy({ json: async () => CHANGES });
     await client(fetch).getChanges();
-    expect(calls[0]?.url).toBe('https://flambeau.test/api/v1/loans/changes');
+    expect(calls[0]?.url).toBe('https://flambeau.test/api/v1/changes');
     expect(calls[0]?.init.method).toBe('GET');
   });
 
   it('forwards since as a query parameter, encoded', async () => {
     const { calls, fetch } = spy({ json: async () => CHANGES });
     await client(fetch).getChanges('1189');
-    expect(calls[0]?.url).toBe('https://flambeau.test/api/v1/loans/changes?since=1189');
+    expect(calls[0]?.url).toBe('https://flambeau.test/api/v1/changes?since=1189');
   });
 
   it('sends the bearer token', async () => {

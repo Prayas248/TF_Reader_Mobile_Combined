@@ -21,13 +21,27 @@ import type { NavLink, WorkType } from '@model/types';
  * can group an article under its journal and a reader can navigate back to
  * it. Both are already in hand at every call site that builds this object
  * (JournalScreen/JournalIssueScreen), so nothing here is a new fetch.
+ *
+ * `institutionId: null` is the signed-out drill-down (PublicCatalogueScreen ->
+ * Journal -> ... -> ItemDetail, no institution selected at all) — Library
+ * membership is sign-in territory, so ItemDetailScreen skips recording it
+ * rather than threading a null institutionId into `articleJournalStore`.
+ *
+ * `coverUrl` is the JOURNAL's own cover (not the article's — an article has
+ * none of its own), threaded through purely so `articleJournalStore`'s
+ * membership record can carry it — Library's Journals tab groups by journal
+ * and has no other way to reach this journal's cover for that row. Optional
+ * because `JournalScreen`'s own `resolvedCoverUrl` can itself be undefined
+ * (no `images` array on the feed) — absent here just means that row falls
+ * back to `ContentCard`'s placeholder, same as any other missing cover.
  */
 export interface ArticleContext {
   journalWorkId: string;
-  institutionId: string;
+  institutionId: string | null;
   journalTitle: string;
   volumeTitle?: string;
   issueTitle?: string;
+  coverUrl?: string;
 }
 
 /**
@@ -92,17 +106,28 @@ export type CatalogueStackParamList = {
   // Journal hierarchy drill-down — Journal Details → Volumes & Issues → Issue
   // Articles → ItemDetail (screen 04). title/coverUrl are passed so the header
   // and cover render without a network call.
-  Journal: { workId: string; title: string; institutionId: string; coverUrl?: string };
+  //
+  // `institutionId: null` means a signed-out reader browsing from
+  // PublicCatalogueScreen's own Journals section — every screen in this
+  // drill-down calls `getPublicWork(workId)` instead of
+  // `getWork(institutionId, workId)` in that case (same branch shape
+  // ItemDetailScreen already uses for `getPublicPublication`).
+  Journal: { workId: string; title: string; institutionId: string | null; coverUrl?: string };
   // Volumes & Issues (screen 03). `volumes` is the journal's own already-
   // fetched `children` list — JournalScreen has just made this exact call, so
   // this screen makes no duplicate fetch of the same root work feed. No
-  // cover — the reference layout for this screen is a plain list, not a
-  // cover-led page.
+  // cover shown ON this screen — the reference layout is a plain list, not a
+  // cover-led page — but `coverUrl` still rides through it unrendered, same
+  // reason `journalWorkId` does: it is display data `ItemDetail`'s
+  // `articleContext` needs several screens further down, for Library's
+  // Journals tab, and this is the only place that value is in hand to
+  // forward from.
   JournalVolumes: {
     journalWorkId: string;
     journalTitle: string;
-    institutionId: string;
+    institutionId: string | null;
     volumes: NavLink[];
+    coverUrl?: string;
   };
   // Issue Articles (screen 04's list). `workId` is the ISSUE's own work id —
   // this screen makes the one lazy getWork() call for it, same as today's
@@ -112,13 +137,15 @@ export type CatalogueStackParamList = {
   // `articleContext` needs to persist journal membership, and is a different
   // id from this screen's own `workId`. volumeTitle is absent when the
   // journal has no volume level (an issue sitting directly under the journal).
+  // `coverUrl` is the same pass-through as `JournalVolumes`'s own copy.
   JournalIssue: {
     journalWorkId: string;
     journalTitle: string;
-    institutionId: string;
+    institutionId: string | null;
     volumeTitle?: string;
     issueTitle: string;
     workId: string;
+    coverUrl?: string;
   };
   // Personal-account (OIDC) form, reached from the access gate's "Personal
   // account" card. Registered here as well as in Profile for the same reason
@@ -128,7 +155,7 @@ export type CatalogueStackParamList = {
   // ItemDetailScreen's 'read' action after openBook() resolves. `initialTarget` is
   // optional and orthogonal to progressStore's own resume mechanism: most callers never
   // pass it and let the reader resume from the last saved position.
-  Reader: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTarget };
+  Reader: { bookId: BookId; format: ContentFormat; title?: string; initialTarget?: ReaderTarget };
   // Accessibility's publication-info screen, pushed from ReaderRouteScreen's info button.
   // No `format` param — re-derived via getPublicationAccessibility's own getFormat(bookId).
   BookInfo: { bookId: BookId };
@@ -137,7 +164,7 @@ export type CatalogueStackParamList = {
   // route, not a `Reader` param, because the two screens have unrelated
   // implementations underneath (expo-audio vs. the epub.js/pdf.js WebView
   // bridge) — see AudioPlayerRouteScreen.tsx's own header.
-  AudioPlayer: { bookId: BookId; title: string };
+  AudioPlayer: { bookId: BookId; title: string; coverUrl?: string };
 };
 
 /** Search nested stack — shares ItemDetail shape. */
@@ -155,10 +182,10 @@ export type SearchStackParamList = {
   PersonalAccount: { mode: PersonalAccountMode };
   // Same reader engine seam as CatalogueStackParamList.Reader — registered here too so
   // "Read" from a Search result doesn't have to jump to the Catalogue tab.
-  Reader: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTarget };
+  Reader: { bookId: BookId; format: ContentFormat; title?: string; initialTarget?: ReaderTarget };
   BookInfo: { bookId: BookId };
   // Same reason as CatalogueStackParamList.AudioPlayer — see its own comment.
-  AudioPlayer: { bookId: BookId; title: string };
+  AudioPlayer: { bookId: BookId; title: string; coverUrl?: string };
 };
 
 /**
@@ -197,10 +224,10 @@ export type LibraryStackParamList = {
   AccessGate: { itemId: string; title: string; authors: string };
   SignIn: undefined;
   PersonalAccount: { mode: PersonalAccountMode };
-  Reader: { bookId: BookId; format: ContentFormat; initialTarget?: ReaderTarget };
+  Reader: { bookId: BookId; format: ContentFormat; title?: string; initialTarget?: ReaderTarget };
   BookInfo: { bookId: BookId };
   // Same reason as CatalogueStackParamList.AudioPlayer — see its own comment.
-  AudioPlayer: { bookId: BookId; title: string };
+  AudioPlayer: { bookId: BookId; title: string; coverUrl?: string };
 };
 
 /** Profile stack — screen 10, plus the settings screens it pushes. */

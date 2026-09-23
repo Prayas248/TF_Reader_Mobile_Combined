@@ -10,7 +10,15 @@
 // point: if the normalizer mishandles wokay's OPDS, this adapter surfaces it
 // today instead of the day the backend lands.
 import type { BookId } from '@/shared/types/primitives';
-import type { BatchItemsResult, Catalogue, Publication, Shelf, SortOrder, WorkFeed } from '@model/types';
+import type {
+  BatchItemsResult,
+  Catalogue,
+  Publication,
+  PublicJournal,
+  Shelf,
+  SortOrder,
+  WorkFeed,
+} from '@model/types';
 import type { DataSource, InstitutionQueryParams } from '@adapters/InstitutionSource';
 import type { ShelfQuery } from '@adapters/CatalogueSource';
 import { CatalogueError, CatalogueFailure } from '@model/errors';
@@ -205,6 +213,14 @@ export class MockAdapter implements DataSource {
     return feed;
   }
 
+  // No journal fixture exists for the SIGNED-IN home catalogue either
+  // (homeCatalogueFixture carries no "Journals" group) — this stays empty
+  // rather than modelling journals here first and leaving that screen behind.
+  async getPublicJournals(): Promise<PublicJournal[]> {
+    await this.simulate('public journals');
+    return [];
+  }
+
   async getPublicPublication(bookId: BookId): Promise<Publication> {
     await this.simulate(bookId);
 
@@ -273,6 +289,26 @@ export class MockAdapter implements DataSource {
           shelfId: 'mock-vol-2',
           target: 'works',
           workId: 'mock-vol-2',
+        },
+      ],
+    };
+  }
+
+  // Same shape as getWork, minus the institution — no fixture models a signed-out article list
+  // with a mix of open/locked acquisition links yet; the real behaviour is exercised against
+  // ApiAdapter (conformance.ts) and PublicCatalogueScreen.test.tsx's own fake DataSource.
+  async getPublicWork(workId: string): Promise<WorkFeed> {
+    await this.simulate(workId);
+    return {
+      kind: 'navigation',
+      title: 'Mock Journal',
+      children: [
+        {
+          title: 'Volume 01',
+          href: `/opds/v1/public/works/mock-vol-1`,
+          shelfId: 'mock-vol-1',
+          target: 'works',
+          workId: 'mock-vol-1',
         },
       ],
     };
